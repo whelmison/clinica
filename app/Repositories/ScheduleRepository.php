@@ -1,0 +1,765 @@
+<?php
+
+namespace Clinic\Repositories;
+
+use PDO;
+
+final class ScheduleRepository
+{
+    private ?bool $attendanceAppointmentColumnExists = null;
+
+    public function __construct(private readonly PDO $pdo)
+    {
+    }
+
+    private function clinicId(): int
+    {
+        return app_active_clinic_id();
+    }
+
+    public function professionals(): array
+    {
+        $stmt = $this->pdo->prepare('SELECT id, nome, permite_secretaria_liberar_agenda FROM profissionais WHERE clinica_id = :clinic_id ORDER BY nome');
+        $stmt->execute([':clinic_id' => $this->clinicId()]);
+
+        return $stmt->fetchAll();
+    }
+
+    public function professionalsWithServices(): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT DISTINCT p.id, p.nome, p.permite_secretaria_liberar_agenda
+             FROM profissionais p
+             INNER JOIN profissional_servico ps ON ps.profissional_id = p.id AND ps.clinica_id = p.clinica_id
+             WHERE p.clinica_id = :clinic_id
+             ORDER BY p.nome'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId()]);
+
+        return $stmt->fetchAll();
+    }
+
+    public function patients(): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, nome, telefone, dia_preferencia, horario_preferencia
+             FROM pacientes
+             WHERE clinica_id = :clinic_id
+             ORDER BY nome'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId()]);
+
+        return $stmt->fetchAll();
+    }
+
+    public function servicesForProfessional(int $professionalId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT s.id, s.nome, COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos
+             FROM profissional_servico ps
+             INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
+             WHERE ps.clinica_id = :clinic_id AND ps.profissional_id = :professional_id
+             ORDER BY s.nome'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':professional_id' => $professionalId]);
+
+        return $stmt->fetchAll();
+    }
+
+    public function findPatient(int $patientId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, nome, telefone, dia_preferencia, horario_preferencia
+             FROM pacientes
+             WHERE clinica_id = :clinic_id AND id = :id
+             LIMIT 1'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $patientId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function findProfessional(int $professionalId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, nome, telefone, mensagem_padrao_whatsapp, permite_secretaria_liberar_agenda
+             FROM profissionais
+             WHERE clinica_id = :clinic_id AND id = :id
+             LIMIT 1'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $professionalId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function findServiceDuration(int $professionalId, int $serviceId): ?int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos
+             FROM profissional_servico ps
+             INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
+             WHERE ps.clinica_id = :clinic_id AND ps.profissional_id = :professional_id AND ps.servico_id = :service_id
+             LIMIT 1'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':service_id' => $serviceId,
+        ]);
+        $value = $stmt->fetchColumn();
+
+        return $value !== false ? (int) $value : null;
+    }
+
+    public function findActiveGuideForAttendance(int $guideId, int $patientId, int $professionalId, ?int $ignoreAttendanceId = null): ?array
+    {
+        $attendanceWhere = '';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':guide_id' => $guideId,
+            ':patient_id' => $patientId,
+            ':professional_id' => $professionalId,
+        ];
+
+        if ($ignoreAttendanceId !== null && $ignoreAttendanceId > 0) {
+            $attendanceWhere = 'WHERE id <> :ignore_attendance_id';
+            $params[':ignore_attendance_id'] = $ignoreAttendanceId;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'SELECT g.id,
+                    g.codigo,
+                    g.paciente_id,
+                    g.profissional_id,
+                    g.total_sessoes,
+                    COALESCE(pl.nome, \'\') AS plano_nome,
+                    COALESCE(a.usadas, 0) AS usadas
+             FROM guias g
+             LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+             LEFT JOIN (
+                SELECT guia_id, COUNT(*) AS usadas
+                FROM atendimentos
+                ' . ($attendanceWhere === '' ? 'WHERE clinica_id = :clinic_id' : $attendanceWhere . ' AND clinica_id = :clinic_id') . '
+                GROUP BY guia_id
+             ) a ON a.guia_id = g.id
+             WHERE g.clinica_id = :clinic_id
+               AND g.id = :guide_id
+               AND g.paciente_id = :patient_id
+               AND (g.profissional_id = :professional_id OR g.profissional_id IS NULL)
+             LIMIT 1'
+        );
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        $total = (int) ($row['total_sessoes'] ?? 0);
+        $used = (int) ($row['usadas'] ?? 0);
+
+        if ($total <= 0 || $used >= $total) {
+            return null;
+        }
+
+        return $row;
+    }
+
+    public function findAttendanceByAppointment(int $appointmentId): ?array
+    {
+        if (!$this->attendanceAppointmentColumnExists()) {
+            return null;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'SELECT id, paciente_id, data, guia_id, agenda_id, status_atendimento
+             FROM atendimentos
+             WHERE clinica_id = :clinic_id AND agenda_id = :appointment_id
+             LIMIT 1'
+        );
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':appointment_id' => $appointmentId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function createAttendanceFromAppointment(array $appointment, array $guide): int
+    {
+        $hasAppointmentColumn = $this->attendanceAppointmentColumnExists();
+        $sql = 'INSERT INTO atendimentos (clinica_id, paciente_id, data, tipo, pago, guia_id, status_atendimento'
+            . ($hasAppointmentColumn ? ', agenda_id' : '')
+            . ') VALUES (:clinic_id, :paciente_id, :data, :tipo, :pago, :guia_id, :status_atendimento'
+            . ($hasAppointmentColumn ? ', :agenda_id' : '')
+            . ')';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':paciente_id' => (int) ($appointment['cliente_id'] ?? 0),
+            ':data' => (string) ($appointment['data_agendamento'] ?? date('Y-m-d')),
+            ':tipo' => (string) ($guide['plano_nome'] ?? ''),
+            ':pago' => 'Pendente',
+            ':guia_id' => (int) ($guide['id'] ?? 0),
+            ':status_atendimento' => 'Realizado',
+        ];
+
+        if ($hasAppointmentColumn) {
+            $params[':agenda_id'] = (int) ($appointment['id'] ?? 0);
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateAttendanceFromAppointment(int $attendanceId, array $appointment, array $guide): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE atendimentos
+             SET paciente_id = :paciente_id,
+                 data = :data,
+                 tipo = :tipo,
+                 guia_id = :guia_id
+             WHERE clinica_id = :clinic_id AND id = :id'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':id' => $attendanceId,
+            ':paciente_id' => (int) ($appointment['cliente_id'] ?? 0),
+            ':data' => (string) ($appointment['data_agendamento'] ?? date('Y-m-d')),
+            ':tipo' => (string) ($guide['plano_nome'] ?? ''),
+            ':guia_id' => (int) ($guide['id'] ?? 0),
+        ]);
+    }
+
+    public function deleteAttendanceForAppointment(int $appointmentId): void
+    {
+        if (!$this->attendanceAppointmentColumnExists()) {
+            return;
+        }
+
+        $stmt = $this->pdo->prepare('DELETE FROM atendimentos WHERE clinica_id = :clinic_id AND agenda_id = :appointment_id');
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':appointment_id' => $appointmentId]);
+    }
+
+    public function hasConflict(string $date, string $startTime, string $endTime, int $professionalId, ?int $ignoreId = null): bool
+    {
+        $sql = 'SELECT COUNT(*)
+                FROM agenda
+                WHERE clinica_id = :clinic_id
+                  AND data_agendamento = :data_agendamento
+                  AND profissional_id = :professional_id
+                  AND status <> :status_cancelado
+                  AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':data_agendamento' => $date,
+            ':professional_id' => $professionalId,
+            ':status_cancelado' => 'cancelado',
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreId !== null) {
+            $sql .= ' AND id <> :ignore_id';
+            $params[':ignore_id'] = $ignoreId;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function hasAvailability(string $date, string $startTime, string $endTime, int $professionalId, ?int $ignoreId = null): bool
+    {
+        $sql = 'SELECT COUNT(*)
+                FROM agenda_disponibilidade
+                WHERE clinica_id = :clinic_id
+                  AND profissional_id = :professional_id
+                  AND data_disponivel = :data_disponivel
+                  AND ativo = 1
+                  AND hora_inicio <= :hora_inicio
+                  AND hora_fim >= :hora_fim';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_disponivel' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreId !== null) {
+            $sql .= ' AND id <> :ignore_id';
+            $params[':ignore_id'] = $ignoreId;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function hasAvailabilityConflict(string $date, string $startTime, string $endTime, int $professionalId, ?int $ignoreId = null): bool
+    {
+        $sql = 'SELECT COUNT(*)
+                FROM agenda_disponibilidade
+                WHERE clinica_id = :clinic_id
+                  AND profissional_id = :professional_id
+                  AND data_disponivel = :data_disponivel
+                  AND ativo = 1
+                  AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_disponivel' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreId !== null) {
+            $sql .= ' AND id <> :ignore_id';
+            $params[':ignore_id'] = $ignoreId;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function findAppointment(int $appointmentId, ?int $scopeProfessionalId = null): ?array
+    {
+        $attendanceSelect = $this->attendanceAppointmentColumnExists()
+            ? ', at.id AS atendimento_id, at.guia_id AS atendimento_guia_id'
+            : ', NULL AS atendimento_id, NULL AS atendimento_guia_id';
+        $attendanceJoin = $this->attendanceAppointmentColumnExists()
+            ? ' LEFT JOIN atendimentos at ON at.agenda_id = a.id AND at.clinica_id = a.clinica_id'
+            : '';
+        $sql = 'SELECT a.*,
+                       p.nome AS profissional_nome,
+                       pa.nome AS paciente_nome,
+                       pa.telefone AS paciente_telefone,
+                       pa.dia_preferencia AS paciente_dia_preferencia,
+                       pa.horario_preferencia AS paciente_horario_preferencia,
+                       s.nome AS servico_nome
+                       ' . $attendanceSelect . '
+                FROM agenda a
+                INNER JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+                INNER JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+                LEFT JOIN pacientes pa ON pa.id = a.cliente_id AND pa.clinica_id = a.clinica_id
+                ' . $attendanceJoin . '
+                WHERE a.clinica_id = :clinic_id AND a.id = :id';
+        $params = [':clinic_id' => $this->clinicId(), ':id' => $appointmentId];
+
+        if ($scopeProfessionalId !== null) {
+            $sql .= ' AND a.profissional_id = :scope_professional_id';
+            $params[':scope_professional_id'] = $scopeProfessionalId;
+        }
+
+        $sql .= ' LIMIT 1';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function createAppointment(array $data): int
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO agenda
+                (clinica_id, data_agendamento, hora_inicio, hora_fim, profissional_id, servico_id, cliente_id, cliente_nome, cliente_telefone, status, observacoes)
+             VALUES
+                (:clinic_id, :data_agendamento, :hora_inicio, :hora_fim, :profissional_id, :servico_id, :cliente_id, :cliente_nome, :cliente_telefone, :status, :observacoes)'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':data_agendamento' => $data['data_agendamento'],
+            ':hora_inicio' => $data['hora_inicio'],
+            ':hora_fim' => $data['hora_fim'],
+            ':profissional_id' => $data['profissional_id'],
+            ':servico_id' => $data['servico_id'],
+            ':cliente_id' => $data['cliente_id'],
+            ':cliente_nome' => $data['cliente_nome'],
+            ':cliente_telefone' => $data['cliente_telefone'],
+            ':status' => $data['status'],
+            ':observacoes' => $data['observacoes'],
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateAppointment(int $appointmentId, array $data): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE agenda
+             SET data_agendamento = :data_agendamento,
+                 hora_inicio = :hora_inicio,
+                 hora_fim = :hora_fim,
+                 profissional_id = :profissional_id,
+                 servico_id = :servico_id,
+                 cliente_id = :cliente_id,
+                 cliente_nome = :cliente_nome,
+                 cliente_telefone = :cliente_telefone,
+                 status = :status,
+                 observacoes = :observacoes
+             WHERE clinica_id = :clinic_id AND id = :id'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':id' => $appointmentId,
+            ':data_agendamento' => $data['data_agendamento'],
+            ':hora_inicio' => $data['hora_inicio'],
+            ':hora_fim' => $data['hora_fim'],
+            ':profissional_id' => $data['profissional_id'],
+            ':servico_id' => $data['servico_id'],
+            ':cliente_id' => $data['cliente_id'],
+            ':cliente_nome' => $data['cliente_nome'],
+            ':cliente_telefone' => $data['cliente_telefone'],
+            ':status' => $data['status'],
+            ':observacoes' => $data['observacoes'],
+        ]);
+    }
+
+    public function updateAppointmentStatus(int $appointmentId, string $status): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE agenda SET status = :status WHERE clinica_id = :clinic_id AND id = :id');
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':id' => $appointmentId,
+            ':status' => $status,
+        ]);
+    }
+
+    public function deleteAppointment(int $appointmentId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM agenda WHERE clinica_id = :clinic_id AND id = :id');
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $appointmentId]);
+    }
+
+    public function paginateAppointments(array $filters, int $page, int $perPage, ?int $scopeProfessionalId = null): array
+    {
+        [$whereSql, $params] = $this->buildAppointmentWhere($filters, $scopeProfessionalId);
+
+        $countStmt = $this->pdo->prepare(
+            'SELECT COUNT(*)
+             FROM agenda a
+             LEFT JOIN pacientes pa ON pa.id = a.cliente_id AND pa.clinica_id = a.clinica_id
+             LEFT JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+             ' . $whereSql
+        );
+        $countStmt->execute($params);
+        $total = (int) $countStmt->fetchColumn();
+
+        $pagination = app_pagination($page, $perPage, $total, 'secretaria_agenda.php', $filters, 'appointment_page');
+
+        $sql = 'SELECT a.*,
+                       p.nome AS profissional_nome,
+                       s.nome AS servico_nome,
+                       COALESCE(pa.nome, a.cliente_nome) AS paciente_nome
+                FROM agenda a
+                INNER JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+                INNER JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+                LEFT JOIN pacientes pa ON pa.id = a.cliente_id AND pa.clinica_id = a.clinica_id
+                ' . $whereSql . '
+                ORDER BY a.data_agendamento DESC, a.hora_inicio ASC
+                LIMIT :limit OFFSET :offset';
+
+        $stmt = $this->pdo->prepare($sql);
+        foreach ($params as $name => $value) {
+            $stmt->bindValue($name, $value);
+        }
+        $stmt->bindValue(':limit', $pagination['per_page'], PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $pagination['offset'], PDO::PARAM_INT);
+        $stmt->execute();
+
+        return [
+            'items' => $stmt->fetchAll(),
+            'pagination' => $pagination,
+        ];
+    }
+
+    public function findAvailability(int $availabilityId, ?int $scopeProfessionalId = null): ?array
+    {
+        $sql = 'SELECT ad.*, p.nome AS profissional_nome
+                FROM agenda_disponibilidade ad
+                INNER JOIN profissionais p ON p.id = ad.profissional_id AND p.clinica_id = ad.clinica_id
+                WHERE ad.clinica_id = :clinic_id AND ad.id = :id';
+        $params = [':clinic_id' => $this->clinicId(), ':id' => $availabilityId];
+
+        if ($scopeProfessionalId !== null) {
+            $sql .= ' AND ad.profissional_id = :scope_professional_id';
+            $params[':scope_professional_id'] = $scopeProfessionalId;
+        }
+
+        $sql .= ' LIMIT 1';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function createAvailability(array $data): int
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO agenda_disponibilidade
+                (clinica_id, profissional_id, data_disponivel, hora_inicio, hora_fim, observacoes, ativo)
+             VALUES
+                (:clinic_id, :profissional_id, :data_disponivel, :hora_inicio, :hora_fim, :observacoes, :ativo)'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':profissional_id' => $data['profissional_id'],
+            ':data_disponivel' => $data['data_disponivel'],
+            ':hora_inicio' => $data['hora_inicio'],
+            ':hora_fim' => $data['hora_fim'],
+            ':observacoes' => $data['observacoes'],
+            ':ativo' => $data['ativo'],
+        ]);
+
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateAvailability(int $availabilityId, array $data): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE agenda_disponibilidade
+             SET profissional_id = :profissional_id,
+                 data_disponivel = :data_disponivel,
+                 hora_inicio = :hora_inicio,
+                 hora_fim = :hora_fim,
+                 observacoes = :observacoes,
+                 ativo = :ativo
+             WHERE clinica_id = :clinic_id AND id = :id'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':id' => $availabilityId,
+            ':profissional_id' => $data['profissional_id'],
+            ':data_disponivel' => $data['data_disponivel'],
+            ':hora_inicio' => $data['hora_inicio'],
+            ':hora_fim' => $data['hora_fim'],
+            ':observacoes' => $data['observacoes'],
+            ':ativo' => $data['ativo'],
+        ]);
+    }
+
+    public function deleteAvailability(int $availabilityId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM agenda_disponibilidade WHERE clinica_id = :clinic_id AND id = :id');
+        $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $availabilityId]);
+    }
+
+    public function paginateAvailabilities(array $filters, int $page, int $perPage, ?int $scopeProfessionalId = null, string $path = 'agenda_liberacao.php'): array
+    {
+        [$whereSql, $params] = $this->buildAvailabilityWhere($filters, $scopeProfessionalId);
+
+        $countStmt = $this->pdo->prepare(
+            'SELECT COUNT(*)
+             FROM agenda_disponibilidade ad
+             LEFT JOIN profissionais p ON p.id = ad.profissional_id AND p.clinica_id = ad.clinica_id
+             ' . $whereSql
+        );
+        $countStmt->execute($params);
+        $total = (int) $countStmt->fetchColumn();
+        $pagination = app_pagination($page, $perPage, $total, $path, $filters, 'availability_page');
+
+        $sql = 'SELECT ad.*, p.nome AS profissional_nome
+                FROM agenda_disponibilidade ad
+                INNER JOIN profissionais p ON p.id = ad.profissional_id AND p.clinica_id = ad.clinica_id
+                ' . $whereSql . '
+                ORDER BY ad.data_disponivel DESC, ad.hora_inicio ASC
+                LIMIT :limit OFFSET :offset';
+        $stmt = $this->pdo->prepare($sql);
+        foreach ($params as $name => $value) {
+            $stmt->bindValue($name, $value);
+        }
+        $stmt->bindValue(':limit', $pagination['per_page'], PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $pagination['offset'], PDO::PARAM_INT);
+        $stmt->execute();
+
+        return [
+            'items' => $stmt->fetchAll(),
+            'pagination' => $pagination,
+        ];
+    }
+
+    public function calendar(string $weekStart, int $professionalId): array
+    {
+        $weekEnd = date('Y-m-d', strtotime($weekStart . ' +6 days'));
+        $attendanceSelect = $this->attendanceAppointmentColumnExists()
+            ? ', at.id AS atendimento_id, at.guia_id AS atendimento_guia_id'
+            : ', NULL AS atendimento_id, NULL AS atendimento_guia_id';
+        $attendanceJoin = $this->attendanceAppointmentColumnExists()
+            ? ' LEFT JOIN atendimentos at ON at.agenda_id = a.id AND at.clinica_id = a.clinica_id'
+            : '';
+
+        $availabilityStmt = $this->pdo->prepare(
+            'SELECT *
+             FROM agenda_disponibilidade
+             WHERE clinica_id = :clinic_id
+               AND profissional_id = :professional_id
+               AND data_disponivel BETWEEN :week_start AND :week_end
+               AND ativo = 1
+             ORDER BY data_disponivel, hora_inicio'
+        );
+        $availabilityStmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':week_start' => $weekStart,
+            ':week_end' => $weekEnd,
+        ]);
+
+        $appointmentStmt = $this->pdo->prepare(
+            'SELECT a.*,
+                    p.nome AS profissional_nome,
+                    s.nome AS servico_nome,
+                    COALESCE(pa.nome, a.cliente_nome) AS paciente_nome,
+                    COALESCE(pa.telefone, a.cliente_telefone) AS paciente_telefone,
+                    pa.dia_preferencia AS paciente_dia_preferencia,
+                    pa.horario_preferencia AS paciente_horario_preferencia
+                    ' . $attendanceSelect . '
+             FROM agenda a
+             INNER JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+             INNER JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+             LEFT JOIN pacientes pa ON pa.id = a.cliente_id AND pa.clinica_id = a.clinica_id
+             ' . $attendanceJoin . '
+             WHERE a.clinica_id = :clinic_id
+               AND a.profissional_id = :professional_id
+               AND a.data_agendamento BETWEEN :week_start AND :week_end
+               AND a.status <> :status_cancelado
+             ORDER BY a.data_agendamento, a.hora_inicio'
+        );
+        $appointmentStmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':week_start' => $weekStart,
+            ':week_end' => $weekEnd,
+            ':status_cancelado' => 'cancelado',
+        ]);
+
+        return [
+            'availabilities' => $availabilityStmt->fetchAll(),
+            'appointments' => $appointmentStmt->fetchAll(),
+        ];
+    }
+
+    public function appointmentsBetween(int $professionalId, string $startDate, string $endDate): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT a.*,
+                    p.nome AS profissional_nome,
+                    s.nome AS servico_nome,
+                    COALESCE(pa.nome, a.cliente_nome) AS paciente_nome,
+                    COALESCE(pa.telefone, a.cliente_telefone) AS paciente_telefone
+             FROM agenda a
+             INNER JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+             INNER JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+             LEFT JOIN pacientes pa ON pa.id = a.cliente_id AND pa.clinica_id = a.clinica_id
+             WHERE a.clinica_id = :clinic_id
+               AND a.profissional_id = :professional_id
+               AND a.data_agendamento BETWEEN :start_date AND :end_date
+               AND a.status <> :status_cancelado
+             ORDER BY a.data_agendamento, a.hora_inicio'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':start_date' => $startDate,
+            ':end_date' => $endDate,
+            ':status_cancelado' => 'cancelado',
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
+    private function buildAppointmentWhere(array $filters, ?int $scopeProfessionalId = null): array
+    {
+        $clauses = ['a.clinica_id = :clinic_id'];
+        $params = [':clinic_id' => $this->clinicId()];
+
+        if ($scopeProfessionalId !== null) {
+            $clauses[] = 'a.profissional_id = :scope_professional_id';
+            $params[':scope_professional_id'] = $scopeProfessionalId;
+        }
+
+        $guideId = (int) ($filters['guia_id'] ?? 0);
+        $patientId = (int) ($filters['paciente_id'] ?? 0);
+        $professionalId = (int) ($filters['profissional_id'] ?? 0);
+        $status = trim((string) ($filters['status'] ?? ''));
+
+        if ($guideId > 0) {
+            $clauses[] = 'EXISTS (
+                SELECT 1
+                FROM guias g
+                WHERE g.id = :guide_id
+                  AND g.clinica_id = a.clinica_id
+                  AND g.paciente_id = a.cliente_id
+                  AND g.profissional_id = a.profissional_id
+            )';
+            $params[':guide_id'] = $guideId;
+        }
+
+        if ($patientId > 0) {
+            $clauses[] = 'a.cliente_id = :patient_id';
+            $params[':patient_id'] = $patientId;
+        }
+
+        if ($professionalId > 0) {
+            $clauses[] = 'a.profissional_id = :professional_id';
+            $params[':professional_id'] = $professionalId;
+        }
+
+        if ($status !== '') {
+            $clauses[] = 'a.status = :status';
+            $params[':status'] = $status;
+        }
+
+        $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+
+        return [$whereSql, $params];
+    }
+
+    private function attendanceAppointmentColumnExists(): bool
+    {
+        if ($this->attendanceAppointmentColumnExists !== null) {
+            return $this->attendanceAppointmentColumnExists;
+        }
+
+        $stmt = $this->pdo->query("SHOW COLUMNS FROM atendimentos LIKE 'agenda_id'");
+        $this->attendanceAppointmentColumnExists = (bool) $stmt->fetch();
+
+        return $this->attendanceAppointmentColumnExists;
+    }
+
+    private function buildAvailabilityWhere(array $filters, ?int $scopeProfessionalId = null): array
+    {
+        $clauses = ['ad.clinica_id = :clinic_id'];
+        $params = [':clinic_id' => $this->clinicId()];
+
+        if ($scopeProfessionalId !== null) {
+            $clauses[] = 'ad.profissional_id = :scope_professional_id';
+            $params[':scope_professional_id'] = $scopeProfessionalId;
+        }
+
+        $professionalId = (int) ($filters['profissional_id'] ?? 0);
+        $month = trim((string) ($filters['mes'] ?? ''));
+
+        if ($professionalId > 0) {
+            $clauses[] = 'ad.profissional_id = :professional_id';
+            $params[':professional_id'] = $professionalId;
+        }
+
+        if ($month !== '') {
+            $clauses[] = 'DATE_FORMAT(ad.data_disponivel, "%Y-%m") = :month';
+            $params[':month'] = $month;
+        }
+
+        $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+
+        return [$whereSql, $params];
+    }
+}

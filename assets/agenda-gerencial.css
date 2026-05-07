@@ -1,0 +1,295 @@
+.agenda-gerencial-page {
+    padding: 1.15rem 0 2rem;
+}
+
+.agenda-gerencial-shell {
+    display: grid;
+    gap: 1rem;
+}
+
+.agenda-gerencial-panel {
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(15, 76, 92, 0.12);
+    border-radius: 20px;
+    box-shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
+}
+
+.agenda-gerencial-hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.35rem;
+}
+
+.agenda-gerencial-hero h1 {
+    color: #0f172a;
+    font-size: 1.5rem;
+    font-weight: 800;
+    margin: 0 0 0.35rem;
+}
+
+.agenda-gerencial-hero p,
+.agenda-gerencial-meta {
+    color: #64748b;
+    margin: 0;
+}
+
+.agenda-gerencial-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    justify-content: flex-end;
+}
+
+.agenda-gerencial-filters {
+    padding: 1.15rem 1.35rem 1.3rem;
+}
+
+.agenda-gerencial-filter-grid {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agenda-gerencial-filter-grid label {
+    color: #475569;
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+}
+
+.agenda-gerencial-filter-grid .agenda-gerencial-filter-actions {
+    align-self: end;
+    display: flex;
+    gap: 0.55rem;
+}
+
+.agenda-gerencial-capture {
+    background: #fff;
+    border-radius: 20px;
+    padding: 1.35rem;
+}
+
+.agenda-gerencial-summary {
+    align-items: stretch;
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 1rem;
+}
+
+.agenda-gerencial-metric {
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 18px;
+    min-height: 150px;
+    padding: 1rem 1.05rem;
+}
+
+.agenda-gerencial-metric small {
+    color: #64748b;
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.agenda-gerencial-metric strong {
+    color: #0f172a;
+    display: block;
+    font-size: 2rem;
+    line-height: 1;
+    margin: 0.6rem 0 0.45rem;
+}
+
+.agenda-gerencial-metric p {
+    color: #475569;
+    font-size: 0.92rem;
+    margin: 0;
+}
+
+.metric-realizado {
+    border-color: rgba(22, 163, 74, 0.2);
+}
+
+.metric-cancelado {
+    border-color: rgba(220, 38, 38, 0.2);
+}
+
+.metric-nao-realizado {
+    border-color: rgba(245, 158, 11, 0.24);
+}
+
+.metric-total {
+    border-color: rgba(14, 116, 144, 0.18);
+}
+
+.agenda-gerencial-highlights {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 1rem;
+}
+
+.agenda-gerencial-highlight {
+    background: linear-gradient(135deg, rgba(15, 76, 92, 0.08), rgba(31, 122, 140, 0.04));
+    border: 1px solid rgba(15, 76, 92, 0.12);
+    border-radius: 18px;
+    padding: 1rem 1.05rem;
+}
+
+.agenda-gerencial-highlight span {
+    color: #0f4c5c;
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+}
+
+.agenda-gerencial-highlight strong {
+    color: #0f172a;
+    display: block;
+    font-size: 1.05rem;
+    margin-bottom: 0.25rem;
+}
+
+.agenda-gerencial-highlight p {
+    color: #475569;
+    margin: 0;
+}
+
+.agenda-gerencial-table-card {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 18px;
+    overflow: hidden;
+}
+
+.agenda-gerencial-table-head {
+    align-items: center;
+    background: rgba(248, 250, 252, 0.95);
+    display: flex;
+    justify-content: space-between;
+    padding: 0.95rem 1rem;
+}
+
+.agenda-gerencial-table-head h2 {
+    color: #0f172a;
+    font-size: 1rem;
+    font-weight: 800;
+    margin: 0;
+}
+
+.agenda-gerencial-table-head p {
+    color: #64748b;
+    margin: 0.18rem 0 0;
+}
+
+.agenda-gerencial-rank {
+    align-items: center;
+    background: rgba(15, 76, 92, 0.08);
+    border-radius: 999px;
+    color: #0f4c5c;
+    display: inline-flex;
+    font-size: 0.82rem;
+    font-weight: 800;
+    justify-content: center;
+    min-width: 2rem;
+    padding: 0.2rem 0.55rem;
+}
+
+.agenda-gerencial-table {
+    margin: 0;
+}
+
+.agenda-gerencial-table thead th {
+    background: rgba(15, 76, 92, 0.04);
+    border-bottom-width: 1px;
+    color: #475569;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.agenda-gerencial-table tbody td {
+    vertical-align: middle;
+}
+
+.agenda-gerencial-empty {
+    color: #64748b;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.agenda-gerencial-notice {
+    border-radius: 14px;
+    bottom: 1.25rem;
+    color: #fff;
+    font-weight: 700;
+    max-width: min(420px, calc(100vw - 2rem));
+    padding: 0.8rem 1rem;
+    position: fixed;
+    right: 1rem;
+    z-index: 1080;
+}
+
+.agenda-gerencial-notice.is-success {
+    background: rgba(22, 163, 74, 0.96);
+}
+
+.agenda-gerencial-notice.is-warning {
+    background: rgba(217, 119, 6, 0.96);
+}
+
+.agenda-gerencial-notice.is-danger {
+    background: rgba(220, 38, 38, 0.96);
+}
+
+.agenda-gerencial-notice.is-info {
+    background: rgba(14, 116, 144, 0.96);
+}
+
+@media (max-width: 1199.98px) {
+    .agenda-gerencial-filter-grid,
+    .agenda-gerencial-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 767.98px) {
+    .agenda-gerencial-page {
+        padding-top: 0.85rem;
+    }
+
+    .agenda-gerencial-hero,
+    .agenda-gerencial-filters,
+    .agenda-gerencial-capture {
+        padding: 1rem;
+    }
+
+    .agenda-gerencial-hero,
+    .agenda-gerencial-highlights,
+    .agenda-gerencial-summary,
+    .agenda-gerencial-filter-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .agenda-gerencial-hero {
+        display: grid;
+    }
+
+    .agenda-gerencial-actions,
+    .agenda-gerencial-filter-grid .agenda-gerencial-filter-actions {
+        justify-content: stretch;
+    }
+
+    .agenda-gerencial-actions .btn,
+    .agenda-gerencial-filter-grid .agenda-gerencial-filter-actions .btn {
+        width: 100%;
+    }
+}
