@@ -27,7 +27,7 @@ if (app_is_professional_user()) {
 
 $rows = app_stmt_all(
     $conn,
-    'SELECT DISTINCT p.id, p.nome
+    'SELECT DISTINCT p.id, p.nome, p.telefone, p.dia_preferencia, p.horario_preferencia
      FROM pacientes p
      ' . $scopeJoin . '
      WHERE p.clinica_id = ?
@@ -43,5 +43,8 @@ app_json([
     'pacientes' => array_map(static fn (array $row): array => [
         'id' => (int) $row['id'],
         'nome' => (string) $row['nome'],
+        'telefone' => (string) ($row['telefone'] ?? ''),
+        'dia_preferencia' => (string) ($row['dia_preferencia'] ?? ''),
+        'horario_preferencia' => (string) ($row['horario_preferencia'] ?? ''),
     ], $rows),
 ]);

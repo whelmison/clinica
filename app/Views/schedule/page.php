@@ -175,20 +175,30 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
                         <input type="hidden" name="return_to" id="appointmentReturnTo" value="<?= app_h($appointmentReturnTo) ?>">
 
                         <div class="full">
-                            <label for="appointmentPatient">Paciente</label>
-                            <select name="cliente_id" id="appointmentPatient" class="form-select" required>
-                                <option value="">Selecione um paciente...</option>
-                                <?php foreach ($patients as $patient): ?>
-                                    <option
-                                        value="<?= (int) $patient['id'] ?>"
-                                        data-name="<?= app_h((string) $patient['nome']) ?>"
-                                        data-phone="<?= app_h((string) $patient['telefone']) ?>"
-                                        data-pref-dia="<?= app_h((string) ($patient['dia_preferencia'] ?? '')) ?>"
-                                        data-pref-hora="<?= app_h((string) ($patient['horario_preferencia'] ?? '')) ?>"
-                                        <?= (int) ($selectedAppointment['cliente_id'] ?? 0) === (int) $patient['id'] ? 'selected' : '' ?>
-                                    ><?= app_h((string) $patient['nome']) ?></option>
-                                <?php endforeach; ?>
-                            </select>
+                            <label for="appointmentPatientSearch">Paciente</label>
+                            <input
+                                type="hidden"
+                                name="cliente_id"
+                                id="appointmentPatient"
+                                value="<?= $selectedAppointmentPatientId ?>"
+                                data-name="<?= app_h($selectedAppointmentName) ?>"
+                                data-phone="<?= app_h($selectedAppointmentPhone) ?>"
+                                data-pref-dia="<?= app_h($selectedAppointmentPreferenceDay) ?>"
+                                data-pref-hora="<?= app_h($selectedAppointmentPreferenceTime) ?>"
+                            >
+                            <div class="autocomplete-wrap">
+                                <input
+                                    type="text"
+                                    id="appointmentPatientSearch"
+                                    class="form-control"
+                                    autocomplete="off"
+                                    required
+                                    value="<?= app_h($selectedAppointmentName) ?>"
+                                    title="Digite parte do nome e escolha o paciente da lista."
+                                    placeholder="Digite para buscar o paciente"
+                                >
+                                <div class="autocomplete-menu" id="appointmentPatientMenu"></div>
+                            </div>
                         </div>
 
                         <div id="patientPreferenceCard" class="agenda-patient-preference full">

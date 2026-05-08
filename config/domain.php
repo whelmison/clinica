@@ -120,12 +120,6 @@ function app_create_clinic_account(mysqli $conn, array $input): array
         return ['ok' => false, 'message' => 'Use login com 3+ caracteres e senha com 6+ caracteres.'];
     }
 
-    $exists = app_stmt_one($conn, 'SELECT id FROM usuarios WHERE login = ? LIMIT 1', 's', [$login]);
-
-    if ($exists) {
-        return ['ok' => false, 'message' => 'Ja existe um usuario com este login.'];
-    }
-
     $conn->begin_transaction();
 
     try {
@@ -158,28 +152,63 @@ function app_create_clinic_account(mysqli $conn, array $input): array
     return ['ok' => true, 'message' => 'Clinica cadastrada com sucesso. Entre com o login criado.'];
 }
 
-function app_attempt_login(mysqli $conn, string $login, string $password): array
+function app_active_clinics(mysqli $conn): array
+{
+    app_ensure_clinics_table($conn);
+
+    return app_stmt_all(
+        $conn,
+        'SELECT id, nome_fantasia FROM clinicas WHERE ativo = 1 ORDER BY nome_fantasia, id'
+    );
+}
+
+function app_active_login_users(mysqli $conn, string $login, ?int $clinicId = null, int $limit = 2): array
+{
+    $login = trim($login);
+
+    if ($login === '') {
+        return [];
+    }
+
+    $sql = 'SELECT u.id,
+                   u.clinica_id,
+                   COALESCE(c.nome_fantasia, ?) AS clinica_nome,
+                   u.login,
+                   u.senha_hash,
+                   u.perfil,
+                   u.profissional_id,
+                   COALESCE(p.nome, u.nome_exibicao, u.login) AS nome_exibicao
+            FROM usuarios u
+            LEFT JOIN clinicas c ON c.id = u.clinica_id
+            LEFT JOIN profissionais p ON p.id = u.profissional_id AND p.clinica_id = u.clinica_id
+            WHERE u.login = ? AND u.ativo = 1 AND COALESCE(c.ativo, 1) = 1';
+    $types = 'ss';
+    $params = [app_default_clinic_name(), $login];
+
+    if ($clinicId !== null && $clinicId > 0) {
+        $sql .= ' AND u.clinica_id = ?';
+        $types .= 'i';
+        $params[] = $clinicId;
+    }
+
+    $sql .= ' ORDER BY c.nome_fantasia, u.id LIMIT ?';
+    $types .= 'i';
+    $params[] = max(1, $limit);
+
+    return app_stmt_all($conn, $sql, $types, $params);
+}
+
+function app_attempt_login(mysqli $conn, string $login, string $password, ?int $clinicId = null): array
 {
     app_install_schema($conn);
 
-    $user = app_stmt_one(
-        $conn,
-        'SELECT u.id,
-                u.clinica_id,
-                COALESCE(c.nome_fantasia, ?) AS clinica_nome,
-                u.login,
-                u.senha_hash,
-                u.perfil,
-                u.profissional_id,
-                COALESCE(p.nome, u.nome_exibicao, u.login) AS nome_exibicao
-         FROM usuarios u
-         LEFT JOIN clinicas c ON c.id = u.clinica_id
-         LEFT JOIN profissionais p ON p.id = u.profissional_id AND p.clinica_id = u.clinica_id
-         WHERE u.login = ? AND u.ativo = 1 AND COALESCE(c.ativo, 1) = 1
-         LIMIT 1',
-        'ss',
-        [app_default_clinic_name(), trim($login)]
-    );
+    $users = app_active_login_users($conn, $login, $clinicId, 2);
+
+    if ($clinicId === null && count($users) > 1) {
+        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Selecione a clinica para entrar.'];
+    }
+
+    $user = $users[0] ?? null;
 
     if (!$user || !password_verify($password, $user['senha_hash'])) {
         return ['ok' => false, 'message' => 'Login ou senha invalidos.'];
@@ -213,7 +242,7 @@ function app_password_reset_code(): string
     return $code;
 }
 
-function app_reset_user_password(mysqli $conn, string $login, string $resetCode, string $password, string $passwordConfirm): array
+function app_reset_user_password(mysqli $conn, string $login, string $resetCode, string $password, string $passwordConfirm, ?int $clinicId = null): array
 {
     $login = trim($login);
     $resetCode = trim($resetCode);
@@ -234,12 +263,13 @@ function app_reset_user_password(mysqli $conn, string $login, string $resetCode,
         return ['ok' => false, 'message' => 'Codigo local de reset invalido.'];
     }
 
-    $user = app_stmt_one(
-        $conn,
-        'SELECT id FROM usuarios WHERE login = ? AND ativo = 1 LIMIT 1',
-        's',
-        [$login]
-    );
+    $users = app_active_login_users($conn, $login, $clinicId, 2);
+
+    if ($clinicId === null && count($users) > 1) {
+        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Selecione a clinica para redefinir a senha.'];
+    }
+
+    $user = $users[0] ?? null;
 
     if (!$user) {
         return ['ok' => false, 'message' => 'Usuario ativo nao encontrado.'];
@@ -650,6 +680,7 @@ function app_parse_money(string $value): float
 function app_create_user(mysqli $conn, string $login, string $password, string $profile, ?int $professionalId = null, ?string $displayName = null): array
 {
     $allowedProfiles = ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'];
+    $clinicId = app_active_clinic_id();
 
     if (!in_array($profile, $allowedProfiles, true)) {
         return ['ok' => false, 'message' => 'Perfil invalido.'];
@@ -659,10 +690,10 @@ function app_create_user(mysqli $conn, string $login, string $password, string $
         return ['ok' => false, 'message' => 'Informe login com 3+ caracteres e senha com 6+ caracteres.'];
     }
 
-    $exists = app_stmt_one($conn, 'SELECT id FROM usuarios WHERE login = ? LIMIT 1', 's', [trim($login)]);
+    $exists = app_stmt_one($conn, 'SELECT id FROM usuarios WHERE clinica_id = ? AND login = ? LIMIT 1', 'is', [$clinicId, trim($login)]);
 
     if ($exists) {
-        return ['ok' => false, 'message' => 'Ja existe um usuario com este login.'];
+        return ['ok' => false, 'message' => 'Ja existe um usuario com este login nesta clinica.'];
     }
 
     if ($profile === 'profissional' && $professionalId === null) {
@@ -674,7 +705,7 @@ function app_create_user(mysqli $conn, string $login, string $password, string $
         $conn,
         'INSERT INTO usuarios (clinica_id, login, senha_hash, perfil, profissional_id, nome_exibicao) VALUES (?, ?, ?, ?, ?, ?)',
         'isssis',
-        [app_active_clinic_id(), trim($login), $passwordHash, $profile, $professionalId, $displayName ?: trim($login)]
+        [$clinicId, trim($login), $passwordHash, $profile, $professionalId, $displayName ?: trim($login)]
     );
 
     if (!$ok) {

@@ -24,6 +24,8 @@ const appointmentAction = document.getElementById('appointmentAction');
 const appointmentId = document.getElementById('appointmentId');
 const appointmentProfessional = document.getElementById('appointmentProfessional');
 const appointmentPatient = document.getElementById('appointmentPatient');
+const appointmentPatientSearch = document.getElementById('appointmentPatientSearch');
+const appointmentPatientMenu = document.getElementById('appointmentPatientMenu');
 const appointmentName = document.getElementById('appointmentName');
 const appointmentPhone = document.getElementById('appointmentPhone');
 const appointmentPreferenceDay = document.getElementById('appointmentPreferenceDay');
@@ -140,13 +142,13 @@ function normalizePhoneDigits(phoneValue) {
 }
 
 function buildAppointmentWhatsappUrl() {
-    const patientPhone = normalizePhoneDigits(appointmentPhone?.value || appointmentPatient?.selectedOptions?.[0]?.dataset.phone || '');
+    const patientPhone = normalizePhoneDigits(appointmentPhone?.value || appointmentPatient?.dataset.phone || '');
 
     if (patientPhone === '') {
         return null;
     }
 
-    const patientName = String(appointmentName?.value || appointmentPatient?.selectedOptions?.[0]?.dataset.name || 'Paciente').trim() || 'Paciente';
+    const patientName = String(appointmentName?.value || appointmentPatient?.dataset.name || appointmentPatientSearch?.value || 'Paciente').trim() || 'Paciente';
     const dateLabel = formatDateLabel(appointmentDate?.value || '') || 'Nao informado';
     const timeLabel = String(appointmentTime?.value || '').trim() || 'Nao informado';
     const serviceLabel = String(appointmentService?.selectedOptions?.[0]?.textContent || 'Servico').trim() || 'Servico';
@@ -226,7 +228,7 @@ function updateAppointmentModalCopy() {
     const isEditing = appointmentAction?.value === 'update_appointment' && (appointmentId?.value || '') !== '' && appointmentId.value !== '0';
     const dateValue = appointmentDate?.value || '';
     const timeValue = appointmentTime?.value || '';
-    const patientLabel = appointmentPatient?.selectedOptions?.[0]?.textContent?.trim() || '';
+    const patientLabel = String(appointmentName?.value || appointmentPatientSearch?.value || '').trim();
     const serviceLabel = appointmentService?.selectedOptions?.[0]?.textContent?.trim() || '';
     const details = [];
 
@@ -538,16 +540,32 @@ function syncAppointmentGuideRequirement(selectedGuideId = '') {
     loadAppointmentGuides(appointmentPatient?.value || '', guideId);
 }
 
-function syncPatientFields() {
+function appointmentPatientDataFromFields() {
+    return {
+        id: appointmentPatient?.value || '',
+        nome: appointmentPatient?.dataset.name || appointmentName?.value || appointmentPatientSearch?.value || '',
+        telefone: appointmentPatient?.dataset.phone || appointmentPhone?.value || '',
+        dia_preferencia: appointmentPatient?.dataset.prefDia || '',
+        horario_preferencia: appointmentPatient?.dataset.prefHora || '',
+    };
+}
+
+function setAppointmentPatientSelection(patient) {
     if (!appointmentPatient || !appointmentName || !appointmentPhone) {
         return;
     }
 
-    const selectedOption = appointmentPatient.options[appointmentPatient.selectedIndex];
-
-    if (!appointmentPatient.value || !selectedOption) {
+    if (!patient || !patient.id) {
+        appointmentPatient.value = '';
+        appointmentPatient.dataset.name = '';
+        appointmentPatient.dataset.phone = '';
+        appointmentPatient.dataset.prefDia = '';
+        appointmentPatient.dataset.prefHora = '';
         appointmentName.value = '';
         appointmentPhone.value = '';
+        if (appointmentPatientSearch) {
+            appointmentPatientSearch.value = '';
+        }
         setPatientPreferenceFields('', '', false);
         showPatientPreference('', '');
         syncAppointmentGuideRequirement('');
@@ -555,12 +573,140 @@ function syncPatientFields() {
         return;
     }
 
-    appointmentName.value = selectedOption.dataset.name || '';
-    appointmentPhone.value = selectedOption.dataset.phone || '';
-    setPatientPreferenceFields(selectedOption.dataset.prefDia || '', selectedOption.dataset.prefHora || '', true);
-    showPatientPreference(selectedOption.dataset.prefDia || '', selectedOption.dataset.prefHora || '');
+    const patientName = patient.nome || patient.paciente_nome || patient.cliente_nome || '';
+    const patientPhone = patient.telefone || patient.paciente_telefone || patient.cliente_telefone || '';
+    const preferenceDay = patient.dia_preferencia || patient.paciente_dia_preferencia || '';
+    const preferenceTime = patient.horario_preferencia || patient.paciente_horario_preferencia || '';
+
+    appointmentPatient.value = String(patient.id);
+    appointmentPatient.dataset.name = patientName;
+    appointmentPatient.dataset.phone = patientPhone;
+    appointmentPatient.dataset.prefDia = preferenceDay;
+    appointmentPatient.dataset.prefHora = preferenceTime;
+    appointmentName.value = patientName;
+    appointmentPhone.value = patientPhone;
+
+    if (appointmentPatientSearch) {
+        appointmentPatientSearch.value = patientName;
+    }
+
+    setPatientPreferenceFields(preferenceDay, preferenceTime, true);
+    showPatientPreference(preferenceDay, preferenceTime);
     syncAppointmentGuideRequirement();
     updateAppointmentModalCopy();
+}
+
+function syncPatientFields() {
+    if (!appointmentPatient || !appointmentName || !appointmentPhone) {
+        return;
+    }
+
+    if (!appointmentPatient.value) {
+        setAppointmentPatientSelection(null);
+        return;
+    }
+
+    const data = appointmentPatientDataFromFields();
+    appointmentName.value = data.nome;
+    appointmentPhone.value = data.telefone;
+
+    if (appointmentPatientSearch && appointmentPatientSearch.value.trim() === '') {
+        appointmentPatientSearch.value = data.nome;
+    }
+
+    setPatientPreferenceFields(data.dia_preferencia, data.horario_preferencia, true);
+    showPatientPreference(data.dia_preferencia, data.horario_preferencia);
+    syncAppointmentGuideRequirement();
+    updateAppointmentModalCopy();
+}
+
+function closeAppointmentPatientMenu() {
+    if (!appointmentPatientMenu) {
+        return;
+    }
+
+    appointmentPatientMenu.classList.remove('is-open');
+    appointmentPatientMenu.innerHTML = '';
+}
+
+function setupAppointmentPatientAutocomplete() {
+    if (!appointmentPatientSearch || !appointmentPatientMenu) {
+        return;
+    }
+
+    let timer = null;
+    let controller = null;
+
+    function render(items) {
+        appointmentPatientMenu.innerHTML = '';
+
+        if (!items.length) {
+            closeAppointmentPatientMenu();
+            return;
+        }
+
+        items.forEach((patient) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'autocomplete-option';
+            button.textContent = patient.nome;
+            button.addEventListener('click', () => {
+                closeAppointmentPatientMenu();
+                setAppointmentPatientSelection(patient);
+            });
+            appointmentPatientMenu.appendChild(button);
+        });
+
+        appointmentPatientMenu.classList.add('is-open');
+    }
+
+    appointmentPatientSearch.addEventListener('input', () => {
+        const term = appointmentPatientSearch.value.trim();
+
+        if (appointmentPatient?.value && term !== (appointmentPatient.dataset.name || '')) {
+            setAppointmentPatientSelection(null);
+            appointmentPatientSearch.value = term;
+        }
+
+        window.clearTimeout(timer);
+
+        if (term.length < 2) {
+            closeAppointmentPatientMenu();
+            return;
+        }
+
+        timer = window.setTimeout(async () => {
+            if (controller) {
+                controller.abort();
+            }
+
+            controller = new AbortController();
+
+            try {
+                const response = await fetch('pacientes_busca.php?q=' + encodeURIComponent(term), {
+                    signal: controller.signal,
+                });
+                const data = await response.json();
+                render(data.pacientes || []);
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    closeAppointmentPatientMenu();
+                }
+            }
+        }, 180);
+    });
+
+    appointmentPatientSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeAppointmentPatientMenu();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!appointmentPatientMenu.contains(event.target) && event.target !== appointmentPatientSearch) {
+            closeAppointmentPatientMenu();
+        }
+    });
 }
 
 function resetAppointmentForm(dateValue = '', timeValue = '') {
@@ -578,6 +724,14 @@ function resetAppointmentForm(dateValue = '', timeValue = '') {
 
     if (appointmentPatient) {
         appointmentPatient.value = '';
+        appointmentPatient.dataset.name = '';
+        appointmentPatient.dataset.phone = '';
+        appointmentPatient.dataset.prefDia = '';
+        appointmentPatient.dataset.prefHora = '';
+    }
+
+    if (appointmentPatientSearch) {
+        appointmentPatientSearch.value = '';
     }
 
     if (appointmentName) {
@@ -683,18 +837,13 @@ function fillAppointmentForm(data) {
         appointmentDeleteBtn.style.display = data.id ? 'inline-flex' : 'none';
     }
 
-    if (appointmentPatient) {
-        appointmentPatient.value = data.cliente_id || '';
-        syncPatientFields();
-    }
-
-    if (appointmentName) {
-        appointmentName.value = data.paciente_nome || data.cliente_nome || '';
-    }
-
-    if (appointmentPhone) {
-        appointmentPhone.value = data.paciente_telefone || data.cliente_telefone || '';
-    }
+    setAppointmentPatientSelection({
+        id: data.cliente_id || '',
+        nome: data.paciente_nome || data.cliente_nome || '',
+        telefone: data.paciente_telefone || data.cliente_telefone || '',
+        dia_preferencia: data.paciente_dia_preferencia || '',
+        horario_preferencia: data.paciente_horario_preferencia || '',
+    });
 
     if (appointmentService) {
         appointmentService.value = data.servico_id || '';
@@ -1105,9 +1254,7 @@ document.querySelectorAll('.calendar-availability').forEach((availabilityElement
     });
 });
 
-if (appointmentPatient) {
-    appointmentPatient.addEventListener('change', syncPatientFields);
-}
+setupAppointmentPatientAutocomplete();
 
 if (appointmentService) {
     appointmentService.addEventListener('change', updateAppointmentModalCopy);
@@ -1140,6 +1287,13 @@ if (appointmentForm) {
             return;
         }
 
+        if (!appointmentPatient?.value) {
+            event.preventDefault();
+            showInlineNotice('Escolha um paciente da lista de autocomplete.', 'warning');
+            appointmentPatientSearch?.focus();
+            return;
+        }
+
         if (appointmentStatus?.value === 'realizado' && (!appointmentGuide || !appointmentGuide.value)) {
             event.preventDefault();
             syncAppointmentGuideRequirement();
@@ -1152,7 +1306,7 @@ if (appointmentForm) {
 if (appointmentModalElement) {
     appointmentModalElement.addEventListener('shown.bs.modal', () => {
         updateAppointmentModalCopy();
-        appointmentPatient?.focus();
+        appointmentPatientSearch?.focus();
     });
 
     appointmentModalElement.addEventListener('hidden.bs.modal', () => {

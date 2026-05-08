@@ -35,7 +35,7 @@ $scheduleService = new ScheduleService($pdo, $scheduleRepository);
 $currentUser = app_current_user() ?? [];
 $statuses = app_schedule_statuses();
 $professionals = $scheduleRepository->professionalsWithServices();
-$patients = $scheduleRepository->patients();
+$patients = [];
 $allowedProfessionalIds = array_map(static fn (array $professional): int => (int) $professional['id'], $professionals);
 $selectedProfessionalId = app_query_int('professional_id') ?: (int) ($allowedProfessionalIds[0] ?? 0);
 $reportReferenceDate = app_request_query('report_date', date('Y-m-d')) ?? date('Y-m-d');

@@ -167,7 +167,7 @@ final class ProfessionalService
         }
 
         if ($this->repository->userByLogin($login, $userId)) {
-            throw new InvalidArgumentException('Ja existe um usuario com este login.');
+            throw new InvalidArgumentException('Ja existe um usuario com este login nesta clinica.');
         }
 
         return [

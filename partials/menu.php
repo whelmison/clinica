@@ -103,7 +103,6 @@ $linksPorPerfil = [
     ],
     'administrativo' => [
         ['label' => 'Painel', 'href' => 'administrativo.php', 'pages' => ['administrativo.php']],
-        ['label' => 'Clinica', 'href' => 'administrativo_clinica.php', 'pages' => ['administrativo_clinica.php']],
         ['label' => 'Profissionais', 'href' => 'administrativo_profissionais.php', 'pages' => ['administrativo_profissionais.php']],
         ['label' => 'Usuarios', 'href' => 'administrativo_usuarios.php', 'pages' => ['administrativo_usuarios.php']],
         ['label' => 'Permissoes', 'href' => 'administrativo_permissoes.php', 'pages' => ['administrativo_permissoes.php']],
@@ -128,6 +127,7 @@ $accessMapMenu = isset($conn) && function_exists('app_effective_page_access_map'
     ? app_effective_page_access_map($conn)
     : app_page_access_map();
 $links = menuFiltrarPorPermissao($linksPorPerfil[$perfilAtual] ?? [], $accessMapMenu);
+$canEditClinic = menuPaginaPermitida('administrativo_clinica.php', $accessMapMenu);
 ?>
 
 <style>
@@ -227,6 +227,9 @@ $links = menuFiltrarPorPermissao($linksPorPerfil[$perfilAtual] ?? [], $accessMap
 <span class="navbar-text badge-perfil">
 <?= app_h($usuarioAtual['nome_exibicao']) ?> | <?= app_h(ucfirst((string) $perfilAtual)) ?>
 </span>
+<?php endif; ?>
+<?php if ($canEditClinic): ?>
+<a class="btn btn-outline-light btn-sm rounded-pill px-3" href="administrativo_clinica.php">Dados da clinica</a>
 <?php endif; ?>
 <a class="btn btn-light btn-sm rounded-pill px-3" href="logout.php">Sair</a>
 </div>

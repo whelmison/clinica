@@ -245,8 +245,11 @@ final class ProfessionalRepository
 
     public function userByLogin(string $login, ?int $ignoreId = null): ?array
     {
-        $sql = 'SELECT * FROM usuarios WHERE login = :login';
-        $params = [':login' => $login];
+        $sql = 'SELECT * FROM usuarios WHERE clinica_id = :clinic_id AND login = :login';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':login' => $login,
+        ];
 
         if ($ignoreId !== null) {
             $sql .= ' AND id <> :ignore_id';

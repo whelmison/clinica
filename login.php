@@ -5,6 +5,7 @@ app_install_schema($conn);
 $message = null;
 $messageType = 'warning';
 $postedAction = '';
+$selectedClinicId = (int) ($_POST['clinica_id'] ?? 0);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedAction = $_POST['action'] ?? '';
@@ -30,7 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = app_attempt_login(
             $conn,
             trim((string) ($_POST['login'] ?? '')),
-            (string) ($_POST['senha'] ?? '')
+            (string) ($_POST['senha'] ?? ''),
+            $selectedClinicId > 0 ? $selectedClinicId : null
         );
 
         if ($result['ok']) {
@@ -57,7 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             trim((string) ($_POST['login'] ?? '')),
             (string) ($_POST['codigo_reset'] ?? ''),
             (string) ($_POST['nova_senha'] ?? ''),
-            (string) ($_POST['confirmar_senha'] ?? '')
+            (string) ($_POST['confirmar_senha'] ?? ''),
+            $selectedClinicId > 0 ? $selectedClinicId : null
         );
 
         if ($result['ok']) {
@@ -71,6 +74,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $flash = app_take_flash();
 $setupMode = !app_has_users($conn);
+$activeClinics = $setupMode ? [] : app_active_clinics($conn);
+
+if ($selectedClinicId <= 0 && count($activeClinics) === 1) {
+    $selectedClinicId = (int) ($activeClinics[0]['id'] ?? 0);
+}
+
 $createAccountMode = !$setupMode && (((string) ($_GET['criar_conta'] ?? '') === '1') || $postedAction === 'create_account');
 $pageTitle = $setupMode ? 'Configuracao inicial' : ($createAccountMode ? 'Criar conta da clinica' : 'Acesso ao sistema');
 $pageDescription = $setupMode
@@ -207,8 +216,24 @@ body {
 
 <div>
 <label class="form-label">Login</label>
-<input type="text" name="login" class="form-control" required autofocus>
+<input type="text" name="login" class="form-control" required autofocus value="<?= app_h((string) ($_POST['login'] ?? '')) ?>">
 </div>
+
+<?php if ($activeClinics): ?>
+<div>
+<label class="form-label">Clinica</label>
+<select name="clinica_id" class="form-select">
+<option value="">Selecione quando houver login repetido</option>
+<?php foreach ($activeClinics as $clinic): ?>
+<?php $clinicId = (int) ($clinic['id'] ?? 0); ?>
+<option value="<?= $clinicId ?>" <?= $selectedClinicId === $clinicId ? 'selected' : '' ?>>
+<?= app_h((string) ($clinic['nome_fantasia'] ?? '')) ?>
+</option>
+<?php endforeach; ?>
+</select>
+<div class="form-text">Use este campo quando o mesmo login existir em mais de uma clinica.</div>
+</div>
+<?php endif; ?>
 
 <div>
 <label class="form-label">Senha</label>
@@ -231,8 +256,23 @@ body {
 
 <div>
 <label class="form-label">Login</label>
-<input type="text" name="login" class="form-control" required>
+<input type="text" name="login" class="form-control" required value="<?= app_h((string) ($_POST['login'] ?? '')) ?>">
 </div>
+
+<?php if ($activeClinics): ?>
+<div>
+<label class="form-label">Clinica</label>
+<select name="clinica_id" class="form-select">
+<option value="">Selecione quando houver login repetido</option>
+<?php foreach ($activeClinics as $clinic): ?>
+<?php $clinicId = (int) ($clinic['id'] ?? 0); ?>
+<option value="<?= $clinicId ?>" <?= $selectedClinicId === $clinicId ? 'selected' : '' ?>>
+<?= app_h((string) ($clinic['nome_fantasia'] ?? '')) ?>
+</option>
+<?php endforeach; ?>
+</select>
+</div>
+<?php endif; ?>
 
 <div>
 <label class="form-label">Codigo local de reset</label>

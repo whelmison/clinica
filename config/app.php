@@ -257,8 +257,8 @@ function app_forced_profile_access_pages(): array
     return [
         'profissional' => ['index.php'],
         'secretaria' => ['secretaria.php'],
-        'administrativo' => ['administrativo.php', 'administrativo_permissoes.php'],
-        'desenvolvedor' => ['desenvolvedor.php', 'administrativo_permissoes.php'],
+        'administrativo' => ['administrativo.php', 'administrativo_clinica.php', 'administrativo_permissoes.php'],
+        'desenvolvedor' => ['desenvolvedor.php', 'administrativo_clinica.php', 'administrativo_permissoes.php'],
     ];
 }
 
@@ -419,6 +419,35 @@ function app_drop_index_if_exists(mysqli $conn, string $table, string $index): v
     }
 }
 
+function app_drop_single_login_unique_indexes(mysqli $conn): void
+{
+    if (!app_table_exists($conn, 'usuarios')) {
+        return;
+    }
+
+    $database = $conn->query('SELECT DATABASE() AS db')->fetch_assoc()['db'] ?? '';
+    $stmt = $conn->prepare(
+        "SELECT index_name
+         FROM information_schema.statistics
+         WHERE table_schema = ? AND table_name = 'usuarios' AND non_unique = 0 AND index_name <> 'PRIMARY'
+         GROUP BY index_name
+         HAVING COUNT(*) = 1 AND SUM(CASE WHEN column_name = 'login' THEN 1 ELSE 0 END) = 1"
+    );
+    $stmt->bind_param('s', $database);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $indexes = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+    $stmt->close();
+
+    foreach ($indexes as $index) {
+        $indexName = (string) ($index['index_name'] ?? '');
+
+        if ($indexName !== '') {
+            app_drop_index_if_exists($conn, 'usuarios', $indexName);
+        }
+    }
+}
+
 function app_ensure_clinics_table(mysqli $conn): void
 {
     $conn->query('CREATE TABLE IF NOT EXISTS clinicas (
@@ -492,6 +521,11 @@ function app_ensure_multiclinic_schema(mysqli $conn, ?int $defaultClinicId = nul
         app_ensure_column($conn, $table, 'clinica_id', $definition);
         $conn->query("UPDATE `$table` SET clinica_id = {$defaultClinicId} WHERE clinica_id IS NULL OR clinica_id <= 0");
         app_ensure_index($conn, $table, 'idx_' . $table . '_clinica', "CREATE INDEX idx_{$table}_clinica ON `$table` (clinica_id)");
+    }
+
+    if (app_table_exists($conn, 'usuarios')) {
+        app_drop_single_login_unique_indexes($conn);
+        app_ensure_index($conn, 'usuarios', 'uq_usuarios_clinica_login', 'CREATE UNIQUE INDEX uq_usuarios_clinica_login ON usuarios (clinica_id, login)');
     }
 
     return $defaultClinicId;
@@ -674,13 +708,16 @@ function app_install_schema(mysqli $conn): void
 
     $conn->query('CREATE TABLE IF NOT EXISTS usuarios (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        login VARCHAR(120) NOT NULL UNIQUE,
+        clinica_id INT NOT NULL DEFAULT 1,
+        login VARCHAR(120) NOT NULL,
         senha_hash VARCHAR(255) NOT NULL,
         perfil VARCHAR(30) NOT NULL,
         profissional_id INT NULL,
         nome_exibicao VARCHAR(255) NULL,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_usuarios_clinica_login (clinica_id, login),
+        INDEX idx_usuarios_clinica (clinica_id),
         INDEX idx_usuarios_perfil (perfil),
         INDEX idx_usuarios_profissional (profissional_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
