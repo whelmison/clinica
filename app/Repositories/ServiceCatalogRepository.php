@@ -65,13 +65,15 @@ final class ServiceCatalogRepository
     public function create(array $data): int
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO servicos (clinica_id, nome, tempo_minutos, ativo)
-             VALUES (:clinic_id, :nome, :tempo_minutos, :ativo)'
+            'INSERT INTO servicos (clinica_id, nome, tempo_minutos, tipo_agendamento, capacidade_agendamento, ativo)
+             VALUES (:clinic_id, :nome, :tempo_minutos, :tipo_agendamento, :capacidade_agendamento, :ativo)'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
             ':nome' => $data['nome'],
             ':tempo_minutos' => $data['tempo_minutos'],
+            ':tipo_agendamento' => $data['tipo_agendamento'],
+            ':capacidade_agendamento' => $data['capacidade_agendamento'],
             ':ativo' => $data['ativo'],
         ]);
 
@@ -84,6 +86,8 @@ final class ServiceCatalogRepository
             'UPDATE servicos
              SET nome = :nome,
                  tempo_minutos = :tempo_minutos,
+                 tipo_agendamento = :tipo_agendamento,
+                 capacidade_agendamento = :capacidade_agendamento,
                  ativo = :ativo
              WHERE clinica_id = :clinic_id AND id = :id'
         );
@@ -92,6 +96,8 @@ final class ServiceCatalogRepository
             ':id' => $serviceId,
             ':nome' => $data['nome'],
             ':tempo_minutos' => $data['tempo_minutos'],
+            ':tipo_agendamento' => $data['tipo_agendamento'],
+            ':capacidade_agendamento' => $data['capacidade_agendamento'],
             ':ativo' => $data['ativo'],
         ]);
     }

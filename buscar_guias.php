@@ -11,7 +11,7 @@ if ($pacienteId <= 0) {
     exit;
 }
 
-$where = ['g.clinica_id = ?', 'g.paciente_id = ?'];
+$where = ['g.clinica_id = ?', 'g.paciente_id = ?', 'g.autorizada = 1', "COALESCE(g.status_operacional, 'criada') <> 'cancelada'"];
 $whereTypes = 'ii';
 $whereParams = [app_active_clinic_id(), $pacienteId];
 $joinWhere = '';
@@ -55,6 +55,8 @@ $rows = app_stmt_all(
         g.id,
         g.codigo,
         g.total_sessoes,
+        g.status_operacional,
+        g.autorizada,
         COALESCE(a.usadas, 0) AS usadas
      FROM guias g
      LEFT JOIN (
@@ -78,9 +80,10 @@ $hasGuideOption = false;
 echo "<option value=''>Selecione</option>";
 
 foreach ($rows as $guide) {
+    $statusData = app_guide_operational_status_data($guide);
     $remaining = max(0, (int) $guide['total_sessoes'] - (int) $guide['usadas']);
 
-    if ($remaining <= 0 && !$incluirFinalizadas) {
+    if (($remaining <= 0 || $statusData['value'] === 'finalizada') && !$incluirFinalizadas) {
         continue;
     }
 

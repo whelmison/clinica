@@ -31,6 +31,46 @@ if (app_is_professional_user()) {
 $pageData = $scheduleRepository->paginateAppointments($appointmentFilters, max(1, app_query_int('page', 1)), 20, app_is_professional_user() ? app_current_professional_id() : null);
 $appointments = $pageData['items'];
 $pagination = $pageData['pagination'];
+$groupWhere = ['g.clinica_id = ?'];
+$groupTypes = 'i';
+$groupParams = [$clinicId = app_active_clinic_id()];
+
+if (!empty($appointmentFilters['data_inicio'])) {
+    $groupWhere[] = 'g.data_agendamento >= ?';
+    $groupTypes .= 's';
+    $groupParams[] = $appointmentFilters['data_inicio'];
+}
+
+if (!empty($appointmentFilters['data_fim'])) {
+    $groupWhere[] = 'g.data_agendamento <= ?';
+    $groupTypes .= 's';
+    $groupParams[] = $appointmentFilters['data_fim'];
+}
+
+if (!empty($appointmentFilters['profissional_id'])) {
+    $groupWhere[] = 'g.profissional_id = ?';
+    $groupTypes .= 'i';
+    $groupParams[] = (int) $appointmentFilters['profissional_id'];
+}
+
+$groupAppointments = app_stmt_all(
+    $conn,
+    'SELECT g.*,
+            p.nome AS profissional_nome,
+            s.nome AS servico_nome,
+            COUNT(gp.id) AS pacientes,
+            SUM(CASE WHEN gp.status = ? THEN 1 ELSE 0 END) AS realizados
+     FROM agenda_grupos g
+     INNER JOIN profissionais p ON p.id = g.profissional_id AND p.clinica_id = g.clinica_id
+     INNER JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
+     LEFT JOIN agenda_grupo_pacientes gp ON gp.grupo_id = g.id AND gp.clinica_id = g.clinica_id
+     WHERE ' . implode(' AND ', $groupWhere) . '
+     GROUP BY g.id
+     ORDER BY g.data_agendamento DESC, g.hora_inicio ASC
+     LIMIT 80',
+    's' . $groupTypes,
+    array_merge(['realizado'], $groupParams)
+);
 $appointmentListReturnQuery = app_build_query([
     'guia_id' => $appointmentFilters['guia_id'] ?: null,
     'paciente_id' => $appointmentFilters['paciente_id'] ?: null,
@@ -323,6 +363,56 @@ function format_whatsapp_link($phone, $message) {
             </div>
             <div class="mt-3 no-print">
                 <?= app_render_pagination($pagination) ?>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-12">
+            <div class="soft-card card">
+                <div class="card-header no-print">
+                    <div class="panel-title">
+                        <h5>Agendamentos em grupo</h5>
+                        <span class="text-muted small">horarios com capacidade por servico</span>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Servico</th>
+                                <th>Profissional</th>
+                                <th>Pacientes</th>
+                                <th class="text-end no-print">Acoes</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($groupAppointments as $groupAppointment): ?>
+                                <tr>
+                                    <td>
+                                        <div class="fw-bold"><?= app_date_br($groupAppointment['data_agendamento']) ?></div>
+                                        <div class="small text-muted"><?= app_time_br($groupAppointment['hora_inicio']) ?> - <?= app_time_br($groupAppointment['hora_fim']) ?></div>
+                                    </td>
+                                    <td><?= app_h((string) $groupAppointment['servico_nome']) ?></td>
+                                    <td><?= app_h((string) $groupAppointment['profissional_nome']) ?></td>
+                                    <td>
+                                        <span class="badge bg-info text-dark"><?= (int) $groupAppointment['pacientes'] ?>/<?= (int) $groupAppointment['capacidade'] ?></span>
+                                        <span class="badge bg-success"><?= (int) $groupAppointment['realizados'] ?> realizados</span>
+                                    </td>
+                                    <td class="text-end no-print">
+                                        <a class="btn btn-sm btn-outline-primary" href="secretaria_agenda_grupo.php?<?= app_h(app_build_query(['professional_id' => $groupAppointment['profissional_id'], 'service_id' => $groupAppointment['servico_id'], 'week_start' => $groupAppointment['data_agendamento'], 'group_id' => $groupAppointment['id']])) ?>">Abrir</a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <?php if (empty($groupAppointments)): ?>
+                                <tr><td colspan="5" class="text-center py-4 text-muted">Nenhum grupo encontrado para estes filtros.</td></tr>
+                            <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

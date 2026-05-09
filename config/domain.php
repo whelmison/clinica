@@ -499,6 +499,75 @@ function app_guide_types(): array
     ];
 }
 
+function app_guide_operational_statuses(): array
+{
+    return [
+        'criada' => 'Criada',
+        'aguardando_autorizacao' => 'Aguardando autorizacao',
+        'autorizada' => 'Autorizada',
+        'em_uso' => 'Em uso',
+        'ultimas_sessoes' => 'Ultimas sessoes',
+        'finalizada' => 'Finalizada',
+        'cancelada' => 'Cancelada',
+    ];
+}
+
+function app_normalize_guide_operational_status(?string $status): string
+{
+    $status = strtolower(trim((string) $status));
+    $status = str_replace(
+        [' ', '-', 'ç', 'ã', 'õ', 'á', 'é', 'ê', 'í', 'ó', 'ú'],
+        ['_', '_', 'c', 'a', 'o', 'a', 'e', 'e', 'i', 'o', 'u'],
+        $status
+    );
+
+    $aliases = [
+        'andamento' => 'em_uso',
+        'ativa' => 'autorizada',
+        'ativo' => 'autorizada',
+        'ultimas_sessoes' => 'ultimas_sessoes',
+    ];
+
+    $status = $aliases[$status] ?? $status;
+
+    return array_key_exists($status, app_guide_operational_statuses()) ? $status : 'criada';
+}
+
+function app_guide_operational_status_data(array $guide): array
+{
+    $storedStatus = app_normalize_guide_operational_status((string) ($guide['status_operacional'] ?? 'criada'));
+    $usedSessions = (int) ($guide['total_atendimentos'] ?? $guide['usadas'] ?? $guide['sessoes_usadas'] ?? 0);
+    $totalSessions = max(0, (int) ($guide['total_sessoes'] ?? 0));
+    $remainingSessions = max(0, $totalSessions - $usedSessions);
+    $authorized = (int) ($guide['autorizada'] ?? 0) === 1;
+
+    if ($storedStatus === 'cancelada') {
+        return ['value' => 'cancelada', 'label' => 'Cancelada', 'class' => 'status-danger'];
+    }
+
+    if ($storedStatus === 'finalizada' || ($totalSessions > 0 && $usedSessions >= $totalSessions)) {
+        return ['value' => 'finalizada', 'label' => 'Finalizada', 'class' => 'status-success'];
+    }
+
+    if ($storedStatus === 'ultimas_sessoes' || ($usedSessions > 0 && $remainingSessions <= 2)) {
+        return ['value' => 'ultimas_sessoes', 'label' => 'Ultimas sessoes', 'class' => 'status-warning'];
+    }
+
+    if ($storedStatus === 'em_uso' || $usedSessions > 0) {
+        return ['value' => 'em_uso', 'label' => 'Em uso', 'class' => 'status-info'];
+    }
+
+    if ($storedStatus === 'autorizada' || $authorized) {
+        return ['value' => 'autorizada', 'label' => 'Autorizada', 'class' => 'status-success-soft'];
+    }
+
+    if ($storedStatus === 'aguardando_autorizacao') {
+        return ['value' => 'aguardando_autorizacao', 'label' => 'Aguardando autorizacao', 'class' => 'status-warning'];
+    }
+
+    return ['value' => 'criada', 'label' => 'Criada', 'class' => 'status-muted'];
+}
+
 function app_schedule_statuses(): array
 {
     return [
@@ -784,10 +853,14 @@ function app_services_for_professional(mysqli $conn, int $professionalId): array
 {
     return app_stmt_all(
         $conn,
-        'SELECT s.id, s.nome, COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos
+        'SELECT s.id,
+                s.nome,
+                COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos,
+                COALESCE(s.tipo_agendamento, \'individual\') AS tipo_agendamento,
+                COALESCE(s.capacidade_agendamento, 1) AS capacidade_agendamento
          FROM profissional_servico ps
          INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
-         WHERE ps.clinica_id = ? AND ps.profissional_id = ?
+         WHERE ps.clinica_id = ? AND ps.profissional_id = ? AND s.ativo = 1
          ORDER BY s.nome',
         'ii',
         [app_active_clinic_id(), $professionalId]
@@ -806,6 +879,8 @@ function app_create_guide(mysqli $conn, array $data): array
     $value = app_parse_money((string) ($data['valor_guia'] ?? '0'));
     $code = trim((string) ($data['codigo'] ?? ''));
     $notes = trim((string) ($data['observacoes'] ?? ''));
+    $authorized = !empty($data['autorizada']) ? 1 : 0;
+    $operationalStatus = app_normalize_guide_operational_status((string) ($data['status_operacional'] ?? 'criada'));
 
     if ($patientId <= 0) {
         return ['ok' => false, 'message' => 'Nao permitir guia sem paciente.'];
@@ -843,12 +918,20 @@ function app_create_guide(mysqli $conn, array $data): array
         return ['ok' => false, 'message' => 'Informe um valor valido para a guia.'];
     }
 
+    if ($operationalStatus === 'cancelada') {
+        $authorized = 0;
+    } elseif ($operationalStatus === 'autorizada') {
+        $authorized = 1;
+    } elseif ($authorized === 1 && in_array($operationalStatus, ['criada', 'aguardando_autorizacao'], true)) {
+        $operationalStatus = 'autorizada';
+    }
+
     $ok = app_stmt_execute(
         $conn,
-        'INSERT INTO guias (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)',
-        'isiiisdisss',
-        [$clinicId, $code, $patientId, $planId, $sessions, $date, $value, $professionalId, $type, $convenio, $notes]
+        'INSERT INTO guias (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)',
+        'isiiisdisssis',
+        [$clinicId, $code, $patientId, $planId, $sessions, $date, $value, $professionalId, $type, $convenio, $notes, $authorized, $operationalStatus]
     );
 
     if (!$ok) {

@@ -114,7 +114,7 @@ body {
 
 .guide-filter-grid {
     display: grid;
-    grid-template-columns: minmax(240px, 1.4fr) minmax(180px, 0.85fr) minmax(180px, 0.85fr) auto;
+    grid-template-columns: minmax(220px, 1.3fr) minmax(170px, 0.75fr) minmax(170px, 0.75fr) minmax(180px, 0.8fr) auto;
     gap: 0.5rem;
     align-items: end;
 }
@@ -268,6 +268,21 @@ body {
 .guide-pill.status-success {
     background: rgba(31, 157, 109, 0.14);
     color: #187047;
+}
+
+.guide-pill.status-success-soft {
+    background: rgba(31, 157, 109, 0.1);
+    color: #187047;
+}
+
+.guide-pill.status-muted {
+    background: #edf2f4;
+    color: #526973;
+}
+
+.guide-pill.status-danger {
+    background: rgba(220, 53, 69, 0.12);
+    color: #9b1c2a;
 }
 
 .guide-action-cell {
@@ -509,6 +524,17 @@ body {
                     <input type="hidden" name="profissional_id" value="<?= (int) $scopeProfessionalId ?>">
                 <?php endif; ?>
             </div>
+            <div>
+                <label class="form-label">Status operacional</label>
+                <select class="form-select" name="status_operacional">
+                    <option value="">Todos</option>
+                    <?php foreach (app_guide_operational_statuses() as $statusValue => $statusLabel): ?>
+                        <option value="<?= app_h($statusValue) ?>" <?= (string) ($filterDefaults['status_operacional'] ?? '') === $statusValue ? 'selected' : '' ?>>
+                            <?= app_h($statusLabel) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
             <div class="guide-filter-actions">
                 <button class="btn btn-primary" type="submit">Filtrar</button>
                 <a href="gestao_guias.php<?= $scopeProfessionalId ? '?profissional_id=' . (int) $scopeProfessionalId : '' ?>" class="btn btn-outline-secondary">Limpar</a>
@@ -547,6 +573,7 @@ body {
                     <input type="hidden" name="filter_paciente_id" value="<?= (int) ($filterDefaults['paciente_id'] ?? 0) ?>">
                     <input type="hidden" name="filter_profissional_id" value="<?= (int) ($scopeProfessionalId ?? ($filterDefaults['profissional_id'] ?? 0)) ?>">
                     <input type="hidden" name="filter_busca" value="<?= app_h((string) ($filterDefaults['busca'] ?? '')) ?>">
+                    <input type="hidden" name="filter_status_operacional" value="<?= app_h((string) ($filterDefaults['status_operacional'] ?? '')) ?>">
                     <input type="hidden" name="filter_page" value="<?= (int) ($pagination['page'] ?? 1) ?>">
 
                     <div class="col-md-6">
@@ -635,6 +662,18 @@ body {
                         <input type="text" name="convenio" class="form-control" value="<?= app_h((string) ($guideFormValues['convenio'] ?? '')) ?>" placeholder="Operadora / convenio">
                     </div>
 
+                    <div class="col-md-4">
+                        <label class="form-label">Status operacional</label>
+                        <select name="status_operacional" class="form-select" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
+                            <?php $selectedOperationalStatus = app_normalize_guide_operational_status((string) ($guideFormValues['status_operacional'] ?? 'criada')); ?>
+                            <?php foreach (app_guide_operational_statuses() as $statusValue => $statusLabel): ?>
+                                <option value="<?= app_h($statusValue) ?>" <?= $selectedOperationalStatus === $statusValue ? 'selected' : '' ?>>
+                                    <?= app_h($statusLabel) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
                     <div class="col-md-6">
                         <label class="form-label">Numero de lote</label>
                         <select name="lote_id" id="guideBatchField" class="form-select">
@@ -656,6 +695,13 @@ body {
                             <?php if ($isEditingGuide && $selectedGuide): ?>
                                 <span><?= app_h(guide_billing_label($selectedGuide)) ?></span>
                             <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6 d-flex align-items-end">
+                        <div class="form-check pb-2">
+                            <input class="form-check-input" type="checkbox" name="autorizada" id="guideAuthorizedField" <?= (int) ($guideFormValues['autorizada'] ?? 0) === 1 ? 'checked' : '' ?> title="Somente guias autorizadas podem gerar atendimento realizado.">
+                            <label class="form-check-label" for="guideAuthorizedField">Guia autorizada</label>
                         </div>
                     </div>
 

@@ -37,6 +37,7 @@ $statuses = app_schedule_statuses();
 $professionals = $scheduleRepository->professionalsWithServices();
 $patients = [];
 $allowedProfessionalIds = array_map(static fn (array $professional): int => (int) $professional['id'], $professionals);
+$professionalChosenInRequest = trim((string) app_request_query('professional_id', '')) !== '';
 $selectedProfessionalId = app_query_int('professional_id') ?: (int) ($allowedProfessionalIds[0] ?? 0);
 $reportReferenceDate = app_request_query('report_date', date('Y-m-d')) ?? date('Y-m-d');
 $reportReferenceDate = strtotime($reportReferenceDate) ? date('Y-m-d', strtotime($reportReferenceDate)) : date('Y-m-d');
@@ -124,6 +125,34 @@ $appointmentFormDateValue = (string) ($selectedAppointment['data_agendamento'] ?
 $appointmentFormTimeValue = app_time_br((string) ($selectedAppointment['hora_inicio'] ?? '08:00:00'));
 $selectedAvailability = null;
 $selectedProfessionalServices = $selectedProfessionalId > 0 ? $scheduleRepository->servicesForProfessional($selectedProfessionalId) : [];
+$selectedCalendarServiceId = app_query_int('service_id');
+
+if ($professionalChosenInRequest && $selectedCalendarServiceId <= 0 && count($selectedProfessionalServices) === 1) {
+    $selectedCalendarServiceId = (int) ($selectedProfessionalServices[0]['id'] ?? 0);
+}
+
+foreach ($selectedProfessionalServices as $calendarService) {
+    if ($professionalChosenInRequest
+        && $selectedCalendarServiceId > 0
+        && (int) $calendarService['id'] === $selectedCalendarServiceId
+        && ($calendarService['tipo_agendamento'] ?? 'individual') === 'grupo') {
+        app_redirect('secretaria_agenda_grupo.php?' . app_build_query([
+            'professional_id' => $selectedProfessionalId,
+            'service_id' => $selectedCalendarServiceId,
+            'week_start' => $weekStart,
+        ]));
+    }
+}
+$calendarFilterServices = $selectedProfessionalServices;
+$calendarIndividualServices = array_values(array_filter(
+    $selectedProfessionalServices,
+    static fn (array $service): bool => ($service['tipo_agendamento'] ?? 'individual') !== 'grupo'
+));
+$calendarGroupServices = array_values(array_filter(
+    $selectedProfessionalServices,
+    static fn (array $service): bool => ($service['tipo_agendamento'] ?? 'individual') === 'grupo'
+));
+$showCalendarServiceSelect = (count($calendarGroupServices) + ($calendarIndividualServices !== [] ? 1 : 0)) > 1;
 $weekDays = app_week_days($weekStart);
 $calendarData = $selectedProfessionalId > 0 ? $scheduleRepository->calendar($weekStart, $selectedProfessionalId) : ['availabilities' => [], 'appointments' => []];
 $calendarNavigationQuery = ['report_date' => $reportReferenceDate];
@@ -169,8 +198,6 @@ $appointmentModalHighlightSubtitle = true;
 $appointmentUnavailableMessage = 'Este horario ainda nao foi liberado para agendamento.';
 $autoOpenSelectedAppointmentModal = $selectedAppointment !== null;
 $floatingFlashMessages = true;
-$autoOpenCalendarFilterModal = $selectedAppointment === null
-    && !isset($_GET['professional_id'])
-    && !isset($_GET['week_start']);
+$autoOpenCalendarFilterModal = !$professionalChosenInRequest && $selectedAppointment === null && count($professionals) > 1;
 
 include __DIR__ . '/app/Views/schedule/page.php';

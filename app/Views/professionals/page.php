@@ -328,13 +328,15 @@ $activeProfessionalId = (int) ($professionalFormValues['professional_id'] ?? 0);
                 <p>Lista de profissionais cadastrados. Gerencie o vinculo de servicos e permissoes.</p>
             </div>
             <div class="d-flex gap-2 flex-wrap">
+                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('professionalsExportArea', 'jpg', 'profissionais')">Exportar JPG</button>
+                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('professionalsExportArea', 'pdf', 'profissionais')">Exportar PDF</button>
                 <a href="administrativo_usuarios.php" class="btn btn-light btn-sm rounded-pill px-3">Gerenciar usuarios</a>
                 <button type="button" class="btn btn-success btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#professionalFormModal">+ Novo profissional</button>
             </div>
         </div>
     </section>
 
-    <div class="soft-card card mt-3">
+    <div class="soft-card card mt-3" id="professionalsExportArea">
         <div class="card-header">
             <div class="panel-title">
                 <h5>Profissionais cadastrados</h5>
@@ -513,6 +515,7 @@ $activeProfessionalId = (int) ($professionalFormValues['professional_id'] ?? 0);
     </div>
 </div>
 
+<script src="assets/list-export.js"></script>
 <script>
 function bindProfessionalModalState(root = document) {
     root.querySelectorAll('.checkbox-card input[type="checkbox"]').forEach((checkbox) => {

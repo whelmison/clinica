@@ -12,6 +12,8 @@ $autoOpenServiceModal = app_query_int('open_new') === 1;
 $serviceFormValues = [
     'nome' => '',
     'tempo_minutos' => 50,
+    'tipo_agendamento' => 'individual',
+    'capacidade_agendamento' => 1,
     'ativo' => 1,
 ];
 
@@ -22,6 +24,8 @@ if (app_request_method() === 'POST') {
         $serviceFormValues = [
             'nome' => app_request_post('nome', '') ?? '',
             'tempo_minutos' => app_post_int('tempo_minutos', 50),
+            'tipo_agendamento' => app_request_post('tipo_agendamento', 'individual') ?? 'individual',
+            'capacidade_agendamento' => app_post_int('capacidade_agendamento', 1),
             'ativo' => isset($_POST['ativo']) ? 1 : 0,
         ];
         $result = $serviceCatalog->save(null, $_POST);

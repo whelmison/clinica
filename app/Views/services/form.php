@@ -99,6 +99,19 @@ body {
                             <input type="number" name="tempo_minutos" class="form-control" min="1" value="<?= (int) ($selectedService['tempo_minutos'] ?? 50) ?>" required>
                         </div>
 
+                        <div class="col-md-6">
+                            <label class="form-label">Tipo de agenda</label>
+                            <select name="tipo_agendamento" id="serviceScheduleType" class="form-select" title="Individual ocupa um horario por paciente. Grupo permite varios pacientes no mesmo horario.">
+                                <option value="individual" <?= ($selectedService['tipo_agendamento'] ?? 'individual') === 'individual' ? 'selected' : '' ?>>Individual</option>
+                                <option value="grupo" <?= ($selectedService['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'selected' : '' ?>>Grupo</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">Capacidade por horario</label>
+                            <input type="number" name="capacidade_agendamento" id="serviceCapacity" class="form-control" min="1" value="<?= (int) ($selectedService['capacidade_agendamento'] ?? 1) ?>" required title="Quantidade maxima de pacientes permitidos no mesmo horario quando o tipo for Grupo.">
+                        </div>
+
                         <div class="col-md-6 d-flex align-items-end">
                             <div class="form-check ps-1 pb-2">
                                 <input class="form-check-input" type="checkbox" name="ativo" id="serviceActive" <?= !isset($selectedService['ativo']) || (int) $selectedService['ativo'] === 1 ? 'checked' : '' ?>>
@@ -125,6 +138,22 @@ body {
     </div>
     </div>
 </div>
+
+<script>
+const serviceScheduleType = document.getElementById('serviceScheduleType');
+const serviceCapacity = document.getElementById('serviceCapacity');
+function syncServiceCapacity() {
+    if (!serviceScheduleType || !serviceCapacity) return;
+    if (serviceScheduleType.value === 'individual') {
+        serviceCapacity.value = '1';
+        serviceCapacity.readOnly = true;
+    } else {
+        serviceCapacity.readOnly = false;
+    }
+}
+serviceScheduleType?.addEventListener('change', syncServiceCapacity);
+syncServiceCapacity();
+</script>
 
 </body>
 </html>

@@ -30,8 +30,10 @@ final class ProfessionalRepository
         $params = [':clinic_id' => $this->clinicId()];
 
         if ($search !== '') {
-            $clauses[] = '(p.nome LIKE :search OR p.profissao LIKE :search OR p.telefone LIKE :search)';
-            $params[':search'] = '%' . $search . '%';
+            $clauses[] = '(p.nome LIKE :search_name OR p.profissao LIKE :search_profession OR p.telefone LIKE :search_phone)';
+            $params[':search_name'] = '%' . $search . '%';
+            $params[':search_profession'] = '%' . $search . '%';
+            $params[':search_phone'] = '%' . $search . '%';
         }
 
         $where = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
@@ -203,8 +205,10 @@ final class ProfessionalRepository
         $params = [':clinic_id' => $this->clinicId()];
 
         if ($search !== '') {
-            $clauses[] = '(u.login LIKE :search OR u.nome_exibicao LIKE :search OR p.nome LIKE :search)';
-            $params[':search'] = '%' . $search . '%';
+            $clauses[] = '(u.login LIKE :search_login OR u.nome_exibicao LIKE :search_display OR p.nome LIKE :search_professional)';
+            $params[':search_login'] = '%' . $search . '%';
+            $params[':search_display'] = '%' . $search . '%';
+            $params[':search_professional'] = '%' . $search . '%';
         }
 
         $where = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';

@@ -22,11 +22,18 @@ $filterDefaults = [
     'busca' => $requestMethod === 'POST'
         ? (app_request_post('filter_busca', '') ?? '')
         : (app_request_query('busca', '') ?? ''),
+    'status_operacional' => $requestMethod === 'POST'
+        ? (app_request_post('filter_status_operacional', '') ?? '')
+        : (app_request_query('status_operacional', '') ?? ''),
 ];
 
 if ($scopeProfessionalId !== null) {
     $filterDefaults['profissional_id'] = $scopeProfessionalId;
 }
+
+$filterDefaults['status_operacional'] = $filterDefaults['status_operacional'] !== ''
+    ? app_normalize_guide_operational_status((string) $filterDefaults['status_operacional'])
+    : '';
 
 $selectedId = $requestMethod === 'POST'
     ? (app_post_int('selected') ?: app_post_int('guide_id') ?: null)
@@ -49,6 +56,7 @@ if ($selectedId !== null && !$selectedGuide) {
         'paciente_id' => $filterDefaults['paciente_id'] ?: null,
         'profissional_id' => $scopeProfessionalId ?? ($filterDefaults['profissional_id'] ?: null),
         'busca' => $filterDefaults['busca'] !== '' ? $filterDefaults['busca'] : null,
+        'status_operacional' => $filterDefaults['status_operacional'] !== '' ? $filterDefaults['status_operacional'] : null,
         'page' => $page > 1 ? $page : null,
     ]));
 }
@@ -62,6 +70,7 @@ if ($selectedGuide && !$canEditSelectedGuide) {
         'paciente_id' => $filterDefaults['paciente_id'] ?: null,
         'profissional_id' => $scopeProfessionalId ?? ($filterDefaults['profissional_id'] ?: null),
         'busca' => $filterDefaults['busca'] !== '' ? $filterDefaults['busca'] : null,
+        'status_operacional' => $filterDefaults['status_operacional'] !== '' ? $filterDefaults['status_operacional'] : null,
         'page' => $page > 1 ? $page : null,
     ]));
 }
@@ -81,6 +90,8 @@ $guideFormValues = [
     'convenio' => (string) ($selectedGuide['convenio'] ?? ''),
     'observacoes' => (string) ($selectedGuide['observacoes'] ?? ''),
     'lote_id' => (int) ($selectedGuide['lote_id'] ?? 0),
+    'autorizada' => (int) ($selectedGuide['autorizada'] ?? 0),
+    'status_operacional' => (string) ($selectedGuide['status_operacional'] ?? 'criada'),
 ];
 $autoOpenGuideModal = ($selectedGuide !== null && $canEditSelectedGuide) || app_query_int('open_new') === 1;
 
@@ -90,6 +101,7 @@ $baseGuideQuery = static function () use ($filterDefaults, $page, $scopeProfessi
         'paciente_id' => $filterDefaults['paciente_id'] ?: null,
         'profissional_id' => $scopeProfessionalId ?? ($filterDefaults['profissional_id'] ?: null),
         'busca' => $filterDefaults['busca'] !== '' ? $filterDefaults['busca'] : null,
+        'status_operacional' => $filterDefaults['status_operacional'] !== '' ? $filterDefaults['status_operacional'] : null,
         'page' => $page > 1 ? $page : null,
     ]);
 };
@@ -113,6 +125,8 @@ if ($requestMethod === 'POST') {
             'convenio' => app_request_post('convenio', '') ?? '',
             'observacoes' => app_request_post('observacoes', '') ?? '',
             'lote_id' => app_post_int('lote_id'),
+            'autorizada' => isset($_POST['autorizada']) ? 1 : 0,
+            'status_operacional' => app_request_post('status_operacional', 'criada') ?? 'criada',
         ];
         $result = $guideId > 0
             ? $guideService->update($guideId, $_POST, $currentUser)

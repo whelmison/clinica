@@ -13,6 +13,8 @@ const initialFlashType = <?= !empty($scheduleFlash['type']) ? json_encode((strin
 const scheduleModeButtons = document.querySelectorAll('[data-schedule-mode]');
 const calendarFilterForm = document.getElementById('calendarFilterForm');
 const calendarProfessional = document.getElementById('calendarProfessional');
+const calendarService = document.getElementById('calendarService');
+const calendarServiceField = document.getElementById('calendarServiceField');
 const calendarFilterModalElement = document.getElementById('calendarFilterModal');
 const appointmentForm = document.getElementById('appointmentForm');
 const appointmentFormHost = document.getElementById('appointmentFormHost');
@@ -1369,6 +1371,69 @@ if (autoSubmitProfessionalSelect && calendarFilterForm && calendarProfessional &
         calendarFilterForm.submit();
     });
 }
+
+function updateCalendarServiceOptions(professionalId, selectedServiceId = '') {
+    if (!calendarService || !professionalId) {
+        return;
+    }
+
+    fetch('buscar_servicos_profissional.php?profissional_id=' + encodeURIComponent(professionalId))
+        .then((response) => response.json())
+        .then((services) => {
+            calendarService.innerHTML = '<option value="">Selecione o servico</option>';
+            services.forEach((service) => {
+                const option = document.createElement('option');
+                option.value = service.id;
+                option.dataset.tipo = service.tipo_agendamento || 'individual';
+                option.dataset.capacidade = service.capacidade_agendamento || '1';
+                option.textContent = `${service.nome} - ${option.dataset.tipo === 'grupo' ? 'Grupo' : 'Individual'}`;
+
+                if (String(service.id) === String(selectedServiceId)) {
+                    option.selected = true;
+                }
+
+                calendarService.appendChild(option);
+            });
+
+            syncCalendarServiceVisibility();
+        })
+        .catch(() => {});
+}
+
+function syncCalendarServiceVisibility() {
+    if (!calendarService || !calendarServiceField) {
+        return;
+    }
+
+    const serviceOptions = Array.from(calendarService.options).filter((option) => option.value !== '');
+    const groupOptions = serviceOptions.filter((option) => (option.dataset.tipo || 'individual') === 'grupo');
+    const hasIndividual = serviceOptions.some((option) => (option.dataset.tipo || 'individual') !== 'grupo');
+    const shouldShow = groupOptions.length + (hasIndividual ? 1 : 0) > 1;
+
+    if (!shouldShow && groupOptions.length === 1 && !hasIndividual) {
+        groupOptions[0].selected = true;
+    }
+
+    calendarServiceField.style.display = shouldShow ? '' : 'none';
+}
+
+if (calendarProfessional && calendarService && !calendarProfessional.disabled) {
+    calendarProfessional.addEventListener('change', () => {
+        updateCalendarServiceOptions(calendarProfessional.value);
+    });
+}
+
+if (calendarFilterForm && calendarService) {
+    calendarFilterForm.addEventListener('submit', () => {
+        const selected = calendarService.selectedOptions?.[0];
+        const scheduleType = selected?.dataset.tipo || 'individual';
+        calendarFilterForm.action = scheduleType === 'grupo'
+            ? 'secretaria_agenda_grupo.php'
+            : 'secretaria_agenda.php';
+    });
+}
+
+syncCalendarServiceVisibility();
 
 scheduleModeButtons.forEach((button) => {
     button.addEventListener('click', () => {

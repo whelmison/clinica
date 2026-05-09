@@ -388,6 +388,18 @@ final class ScheduleService
             throw new InvalidArgumentException('Preencha profissional, servico, data e horario.');
         }
 
+        $dateTimestamp = strtotime($date);
+
+        if ($dateTimestamp === false) {
+            throw new InvalidArgumentException('Informe uma data valida para o agendamento.');
+        }
+
+        $date = date('Y-m-d', $dateTimestamp);
+
+        if ($date < date('Y-m-d')) {
+            throw new InvalidArgumentException('Nao e permitido agendar paciente em data anterior ao dia atual.');
+        }
+
         if (!array_key_exists($status, app_schedule_statuses())) {
             throw new InvalidArgumentException('Selecione um status de agenda valido.');
         }
@@ -406,10 +418,15 @@ final class ScheduleService
             $clientPhone = (string) $patient['telefone'];
         }
 
-        $duration = $this->repository->findServiceDuration($professionalId, $serviceId);
+        $service = $this->repository->findProfessionalService($professionalId, $serviceId);
+        $duration = $service ? (int) ($service['tempo_minutos'] ?? 0) : null;
 
         if ($duration === null || $duration <= 0) {
             throw new InvalidArgumentException('O servico precisa estar vinculado ao profissional com duracao valida.');
+        }
+
+        if (($service['tipo_agendamento'] ?? 'individual') === 'grupo') {
+            throw new InvalidArgumentException('Este servico usa agenda em grupo. Abra a agenda em grupo para agendar.');
         }
 
         $startDate = \DateTime::createFromFormat('H:i', $start) ?: \DateTime::createFromFormat('H:i:s', $start);
@@ -431,6 +448,16 @@ final class ScheduleService
             throw new InvalidArgumentException('Ja existe outro agendamento ocupando este horario.');
         }
 
+        if ($this->repository->hasGroupConflict($date, $startSql, $endSql, $professionalId)) {
+            throw new InvalidArgumentException('Ja existe uma agenda em grupo ocupando este horario.');
+        }
+
+        $patientConflict = $this->repository->findPatientScheduleConflict($date, $startSql, $endSql, $patientId, $ignoreId);
+
+        if ($patientConflict !== null) {
+            throw new InvalidArgumentException($this->patientScheduleConflictMessage($patientConflict));
+        }
+
         return [
             'data_agendamento' => $date,
             'hora_inicio' => $startSql,
@@ -443,6 +470,26 @@ final class ScheduleService
             'status' => $status,
             'observacoes' => $notes,
         ];
+    }
+
+    private function patientScheduleConflictMessage(array $conflict): string
+    {
+        $type = ($conflict['tipo_agenda'] ?? '') === 'grupo' ? 'sessao em grupo' : 'agenda individual';
+        $professional = trim((string) ($conflict['profissional_nome'] ?? '')) ?: 'profissional nao informado';
+        $service = trim((string) ($conflict['servico_nome'] ?? '')) ?: 'servico nao informado';
+        $date = (string) ($conflict['data_agendamento'] ?? '');
+        $dateLabel = $date !== '' ? app_date_br($date) : 'data nao informada';
+        $start = substr((string) ($conflict['hora_inicio'] ?? ''), 0, 5);
+        $end = substr((string) ($conflict['hora_fim'] ?? ''), 0, 5);
+        $timeLabel = $start !== '' && $end !== '' ? $start . ' as ' . $end : 'horario nao informado';
+        $status = trim((string) ($conflict['status'] ?? '')) ?: 'sem status';
+
+        return 'Este paciente ja possui agendamento neste mesmo horario. Motivo: ja existe ' . $type
+            . ' com ' . $professional
+            . ', servico ' . $service
+            . ', em ' . $dateLabel
+            . ' das ' . $timeLabel
+            . ' (status: ' . $status . ').';
     }
 
     private function normalizeAvailability(array $input, array $user, ?array $existing = null): array

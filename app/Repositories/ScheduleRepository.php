@@ -55,10 +55,14 @@ final class ScheduleRepository
     public function servicesForProfessional(int $professionalId): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT s.id, s.nome, COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos
+            'SELECT s.id,
+                    s.nome,
+                    COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos,
+                    COALESCE(s.tipo_agendamento, \'individual\') AS tipo_agendamento,
+                    COALESCE(s.capacidade_agendamento, 1) AS capacidade_agendamento
              FROM profissional_servico ps
              INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
-             WHERE ps.clinica_id = :clinic_id AND ps.profissional_id = :professional_id
+             WHERE ps.clinica_id = :clinic_id AND ps.profissional_id = :professional_id AND s.ativo = 1
              ORDER BY s.nome'
         );
         $stmt->execute([':clinic_id' => $this->clinicId(), ':professional_id' => $professionalId]);
@@ -96,11 +100,25 @@ final class ScheduleRepository
 
     public function findServiceDuration(int $professionalId, int $serviceId): ?int
     {
+        $service = $this->findProfessionalService($professionalId, $serviceId);
+
+        return $service ? (int) $service['tempo_minutos'] : null;
+    }
+
+    public function findProfessionalService(int $professionalId, int $serviceId): ?array
+    {
         $stmt = $this->pdo->prepare(
-            'SELECT COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos
+            'SELECT s.id,
+                    s.nome,
+                    COALESCE(ps.tempo_minutos, s.tempo_minutos) AS tempo_minutos,
+                    COALESCE(s.tipo_agendamento, \'individual\') AS tipo_agendamento,
+                    COALESCE(s.capacidade_agendamento, 1) AS capacidade_agendamento
              FROM profissional_servico ps
              INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
-             WHERE ps.clinica_id = :clinic_id AND ps.profissional_id = :professional_id AND ps.servico_id = :service_id
+             WHERE ps.clinica_id = :clinic_id
+               AND ps.profissional_id = :professional_id
+               AND ps.servico_id = :service_id
+               AND s.ativo = 1
              LIMIT 1'
         );
         $stmt->execute([
@@ -108,16 +126,18 @@ final class ScheduleRepository
             ':professional_id' => $professionalId,
             ':service_id' => $serviceId,
         ]);
-        $value = $stmt->fetchColumn();
+        $row = $stmt->fetch();
 
-        return $value !== false ? (int) $value : null;
+        return $row ?: null;
     }
 
     public function findActiveGuideForAttendance(int $guideId, int $patientId, int $professionalId, ?int $ignoreAttendanceId = null): ?array
     {
         $attendanceWhere = '';
+        $clinicId = $this->clinicId();
         $params = [
-            ':clinic_id' => $this->clinicId(),
+            ':clinic_id' => $clinicId,
+            ':attendance_clinic_id' => $clinicId,
             ':guide_id' => $guideId,
             ':patient_id' => $patientId,
             ':professional_id' => $professionalId,
@@ -133,6 +153,7 @@ final class ScheduleRepository
                     g.codigo,
                     g.paciente_id,
                     g.profissional_id,
+                    g.autorizada,
                     g.total_sessoes,
                     COALESCE(pl.nome, \'\') AS plano_nome,
                     COALESCE(a.usadas, 0) AS usadas
@@ -141,13 +162,15 @@ final class ScheduleRepository
              LEFT JOIN (
                 SELECT guia_id, COUNT(*) AS usadas
                 FROM atendimentos
-                ' . ($attendanceWhere === '' ? 'WHERE clinica_id = :clinic_id' : $attendanceWhere . ' AND clinica_id = :clinic_id') . '
+                ' . ($attendanceWhere === '' ? 'WHERE clinica_id = :attendance_clinic_id' : $attendanceWhere . ' AND clinica_id = :attendance_clinic_id') . '
                 GROUP BY guia_id
              ) a ON a.guia_id = g.id
              WHERE g.clinica_id = :clinic_id
                AND g.id = :guide_id
                AND g.paciente_id = :patient_id
                AND (g.profissional_id = :professional_id OR g.profissional_id IS NULL)
+               AND g.autorizada = 1
+               AND COALESCE(g.status_operacional, \'criada\') NOT IN (\'cancelada\', \'finalizada\')
              LIMIT 1'
         );
         $stmt->execute($params);
@@ -264,6 +287,199 @@ final class ScheduleRepository
         if ($ignoreId !== null) {
             $sql .= ' AND id <> :ignore_id';
             $params[':ignore_id'] = $ignoreId;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function hasGroupConflict(string $date, string $startTime, string $endTime, int $professionalId): bool
+    {
+        $tableStmt = $this->pdo->query("SHOW TABLES LIKE 'agenda_grupos'");
+        if (!$tableStmt || !$tableStmt->fetchColumn()) {
+            return false;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*)
+             FROM agenda_grupos
+             WHERE clinica_id = :clinic_id
+               AND data_agendamento = :data_agendamento
+               AND profissional_id = :professional_id
+               AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':data_agendamento' => $date,
+            ':professional_id' => $professionalId,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ]);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function hasPatientIndividualConflict(string $date, string $startTime, string $endTime, int $patientId, ?int $ignoreId = null): bool
+    {
+        if ($patientId <= 0) {
+            return false;
+        }
+
+        $sql = 'SELECT COUNT(*)
+                FROM agenda
+                WHERE clinica_id = :clinic_id
+                  AND data_agendamento = :data_agendamento
+                  AND cliente_id = :patient_id
+                  AND status <> :status_cancelado
+                  AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':data_agendamento' => $date,
+            ':patient_id' => $patientId,
+            ':status_cancelado' => 'cancelado',
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreId !== null) {
+            $sql .= ' AND id <> :ignore_id';
+            $params[':ignore_id'] = $ignoreId;
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) $stmt->fetchColumn() > 0;
+    }
+
+    public function findPatientScheduleConflict(string $date, string $startTime, string $endTime, int $patientId, ?int $ignoreId = null, ?int $ignoreMemberId = null): ?array
+    {
+        if ($patientId <= 0) {
+            return null;
+        }
+
+        $sql = 'SELECT a.id,
+                       a.data_agendamento,
+                       a.hora_inicio,
+                       a.hora_fim,
+                       a.status,
+                       COALESCE(p.nome, \'\') AS profissional_nome,
+                       COALESCE(s.nome, \'\') AS servico_nome
+                FROM agenda a
+                LEFT JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+                LEFT JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+                WHERE a.clinica_id = :clinic_id
+                  AND a.data_agendamento = :data_agendamento
+                  AND a.cliente_id = :patient_id
+                  AND a.status <> :status_cancelado
+                  AND NOT (a.hora_fim <= :hora_inicio OR a.hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':data_agendamento' => $date,
+            ':patient_id' => $patientId,
+            ':status_cancelado' => 'cancelado',
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreId !== null) {
+            $sql .= ' AND a.id <> :ignore_id';
+            $params[':ignore_id'] = $ignoreId;
+        }
+
+        $sql .= ' ORDER BY a.hora_inicio LIMIT 1';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $individual = $stmt->fetch();
+
+        if ($individual) {
+            $individual['tipo_agenda'] = 'individual';
+
+            return $individual;
+        }
+
+        $tableStmt = $this->pdo->query("SHOW TABLES LIKE 'agenda_grupos'");
+        if (!$tableStmt || !$tableStmt->fetchColumn()) {
+            return null;
+        }
+
+        $sql = 'SELECT gp.id,
+                       g.data_agendamento,
+                       g.hora_inicio,
+                       g.hora_fim,
+                       gp.status,
+                       COALESCE(p.nome, \'\') AS profissional_nome,
+                       COALESCE(s.nome, \'\') AS servico_nome
+                FROM agenda_grupo_pacientes gp
+                INNER JOIN agenda_grupos g ON g.id = gp.grupo_id AND g.clinica_id = gp.clinica_id
+                LEFT JOIN profissionais p ON p.id = g.profissional_id AND p.clinica_id = g.clinica_id
+                LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
+                WHERE gp.clinica_id = :clinic_id
+                  AND gp.paciente_id = :patient_id
+                  AND gp.status <> :status_cancelado
+                  AND g.data_agendamento = :data_agendamento
+                  AND NOT (g.hora_fim <= :hora_inicio OR g.hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':patient_id' => $patientId,
+            ':status_cancelado' => 'cancelado',
+            ':data_agendamento' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreMemberId !== null) {
+            $sql .= ' AND gp.id <> :ignore_member_id';
+            $params[':ignore_member_id'] = $ignoreMemberId;
+        }
+
+        $sql .= ' ORDER BY g.hora_inicio LIMIT 1';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $group = $stmt->fetch();
+
+        if ($group) {
+            $group['tipo_agenda'] = 'grupo';
+
+            return $group;
+        }
+
+        return null;
+    }
+
+    public function hasPatientGroupConflict(string $date, string $startTime, string $endTime, int $patientId, ?int $ignoreMemberId = null): bool
+    {
+        if ($patientId <= 0) {
+            return false;
+        }
+
+        $tableStmt = $this->pdo->query("SHOW TABLES LIKE 'agenda_grupos'");
+        if (!$tableStmt || !$tableStmt->fetchColumn()) {
+            return false;
+        }
+
+        $sql = 'SELECT COUNT(*)
+                FROM agenda_grupo_pacientes gp
+                INNER JOIN agenda_grupos g ON g.id = gp.grupo_id AND g.clinica_id = gp.clinica_id
+                WHERE gp.clinica_id = :clinic_id
+                  AND gp.paciente_id = :patient_id
+                  AND gp.status <> :status_cancelado
+                  AND g.data_agendamento = :data_agendamento
+                  AND NOT (g.hora_fim <= :hora_inicio OR g.hora_inicio >= :hora_fim)';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':patient_id' => $patientId,
+            ':status_cancelado' => 'cancelado',
+            ':data_agendamento' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ];
+
+        if ($ignoreMemberId !== null) {
+            $sql .= ' AND gp.id <> :ignore_member_id';
+            $params[':ignore_member_id'] = $ignoreMemberId;
         }
 
         $stmt = $this->pdo->prepare($sql);

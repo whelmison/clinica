@@ -2,18 +2,7 @@
 
 function guide_status_data(array $guide): array
 {
-    $usedSessions = (int) ($guide['total_atendimentos'] ?? 0);
-    $remainingSessions = max(0, (int) $guide['total_sessoes'] - $usedSessions);
-
-    if ($remainingSessions <= 0) {
-        return ['label' => 'Finalizada', 'class' => 'status-success'];
-    }
-
-    if ($remainingSessions <= 2) {
-        return ['label' => 'Ultimas sessoes', 'class' => 'status-warning'];
-    }
-
-    return ['label' => 'Ativa', 'class' => 'status-info'];
+    return app_guide_operational_status_data($guide);
 }
 
 function guide_billing_label(array $guide): string
@@ -49,19 +38,22 @@ function render_guide_metrics(array $guides): string
 {
     $summary = [
         'total' => count($guides),
-        'ativas' => 0,
+        'autorizadas' => 0,
+        'em_uso' => 0,
         'ultimas' => 0,
         'finalizadas' => 0,
     ];
 
     foreach ($guides as $guide) {
-        $status = guide_status_data($guide)['label'];
+        $status = guide_status_data($guide)['value'];
 
-        if ($status === 'Ativa') {
-            $summary['ativas']++;
-        } elseif ($status === 'Ultimas sessoes') {
+        if ($status === 'autorizada') {
+            $summary['autorizadas']++;
+        } elseif ($status === 'em_uso') {
+            $summary['em_uso']++;
+        } elseif ($status === 'ultimas_sessoes') {
             $summary['ultimas']++;
-        } else {
+        } elseif ($status === 'finalizada') {
             $summary['finalizadas']++;
         }
     }
@@ -70,7 +62,8 @@ function render_guide_metrics(array $guides): string
     ?>
     <div class="guide-summary-strip">
         <span><strong><?= $summary['total'] ?></strong> guias na pagina</span>
-        <span><strong><?= $summary['ativas'] ?></strong> ativas</span>
+        <span><strong><?= $summary['autorizadas'] ?></strong> autorizadas</span>
+        <span><strong><?= $summary['em_uso'] ?></strong> em uso</span>
         <span><strong><?= $summary['ultimas'] ?></strong> nas ultimas sessoes</span>
         <span><strong><?= $summary['finalizadas'] ?></strong> finalizadas</span>
     </div>
@@ -118,7 +111,7 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
                 <div class="guide-muted-cell"><?= app_h($guide['profissional_nome'] ?: 'Profissional nao informado') ?></div>
                 <div>
                     <span class="guide-pill <?= app_h($status['class']) ?>"><?= app_h($sessionsLabel) ?></span>
-                    <small><?= app_h($status['label']) ?></small>
+                    <small><?= app_h($status['label']) ?> | <?= (int) ($guide['autorizada'] ?? 0) === 1 ? 'Autorizada' : 'Nao autorizada' ?></small>
                 </div>
                 <div>
                     <span class="guide-pill"><?= app_h(guide_type_label($guide)) ?></span>

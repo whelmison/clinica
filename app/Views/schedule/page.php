@@ -33,6 +33,9 @@ $appointmentFormTimeValue = $appointmentFormTimeValue ?? app_time_br((string) ($
 $calendarOnlyLayout = $calendarOnlyLayout ?? false;
 $showTopCalendarFilters = $showTopCalendarFilters ?? false;
 $showCalendarFilterModal = $showCalendarFilterModal ?? false;
+$calendarFilterServices = $calendarFilterServices ?? $selectedProfessionalServices;
+$selectedCalendarServiceId = (int) ($selectedCalendarServiceId ?? 0);
+$showCalendarServiceSelect = $showCalendarServiceSelect ?? (count($calendarFilterServices) > 1);
 $showOperationPanel = $showOperationPanel ?? true;
 $appointmentModalHighlightSubtitle = $appointmentModalHighlightSubtitle ?? false;
 $appointmentUnavailableMessage = $appointmentUnavailableMessage ?? 'Este horario ainda nao foi liberado para agendamento.';
@@ -228,14 +231,15 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
                         <div>
                             <label for="appointmentService">Servico</label>
                             <select name="servico_id" id="appointmentService" class="form-select" required>
-                                <?php if (!empty($selectedProfessionalServices)): ?>
-                                    <?php foreach ($selectedProfessionalServices as $service): ?>
+                                <?php $individualServices = array_values(array_filter($selectedProfessionalServices, static fn (array $service): bool => ($service['tipo_agendamento'] ?? 'individual') !== 'grupo')); ?>
+                                <?php if (!empty($individualServices)): ?>
+                                    <?php foreach ($individualServices as $service): ?>
                                         <option value="<?= (int) $service['id'] ?>" <?= (int) ($selectedAppointment['servico_id'] ?? 0) === (int) $service['id'] ? 'selected' : '' ?>>
                                             <?= app_h((string) $service['nome']) ?> (<?= (int) $service['tempo_minutos'] ?> min)
                                         </option>
                                     <?php endforeach; ?>
                                 <?php else: ?>
-                                    <option value="">Sem servicos vinculados</option>
+                                    <option value="">Sem servicos individuais vinculados</option>
                                 <?php endif; ?>
                             </select>
                         </div>
@@ -266,7 +270,7 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
 
                         <div>
                             <label for="appointmentDate">Data</label>
-                            <input type="date" name="data_agendamento" id="appointmentDate" class="form-control" value="<?= app_h($appointmentFormDateValue) ?>" required>
+                            <input type="date" name="data_agendamento" id="appointmentDate" class="form-control" value="<?= app_h($appointmentFormDateValue) ?>" min="<?= app_h(date('Y-m-d')) ?>" required>
                         </div>
 
                         <div>
@@ -486,6 +490,22 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
                         <?php if (app_is_professional_user()): ?>
                             <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
                         <?php endif; ?>
+                    </div>
+                    <div class="agenda-toolbar-field" id="calendarServiceField" <?= $showCalendarServiceSelect ? '' : 'style="display:none;"' ?>>
+                        <label for="calendarService">Servico</label>
+                        <select name="service_id" id="calendarService" class="form-select">
+                            <option value="">Selecione o servico</option>
+                            <?php foreach ($calendarFilterServices as $service): ?>
+                                <option
+                                    value="<?= (int) $service['id'] ?>"
+                                    data-tipo="<?= app_h((string) ($service['tipo_agendamento'] ?? 'individual')) ?>"
+                                    data-capacidade="<?= (int) ($service['capacidade_agendamento'] ?? 1) ?>"
+                                    <?= $selectedCalendarServiceId > 0 && (int) $service['id'] === $selectedCalendarServiceId ? 'selected' : '' ?>
+                                >
+                                    <?= app_h((string) $service['nome']) ?> - <?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                     <div class="agenda-toolbar-field">
                         <label for="calendarWeekStart">Semana</label>

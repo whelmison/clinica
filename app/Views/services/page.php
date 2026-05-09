@@ -135,7 +135,11 @@ body {
                 <h3 class="mb-2">Catalogo de servicos</h3>
                 <p>Lista central de servicos com filtro, duracao padrao, status e acesso separado para novo e editar.</p>
             </div>
-            <button type="button" class="btn btn-light btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#serviceFormModal">+ Novo servico</button>
+            <div class="d-flex gap-2 flex-wrap">
+                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'jpg', 'servicos')">Exportar JPG</button>
+                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'pdf', 'servicos')">Exportar PDF</button>
+                <button type="button" class="btn btn-light btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#serviceFormModal">+ Novo servico</button>
+            </div>
         </div>
     </section>
 
@@ -156,7 +160,7 @@ body {
         </div>
     </div>
 
-    <div class="soft-card card services-card services-table-card">
+    <div class="soft-card card services-card services-table-card" id="servicesExportArea">
         <div class="card-header">
             <div class="panel-title">
                 <h5>Servicos cadastrados</h5>
@@ -170,6 +174,8 @@ body {
                     <tr>
                         <th>Servico</th>
                         <th>Duracao</th>
+                        <th>Agenda</th>
+                        <th>Capacidade</th>
                         <th>Profissionais</th>
                         <th>Status</th>
                         <th class="text-end">Acoes</th>
@@ -180,6 +186,8 @@ body {
                         <tr>
                             <td><?= app_h((string) $service['nome']) ?></td>
                             <td><?= (int) $service['tempo_minutos'] ?> min</td>
+                            <td><?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?></td>
+                            <td><?= (int) ($service['capacidade_agendamento'] ?? 1) ?></td>
                             <td><?= (int) $service['total_profissionais'] ?></td>
                             <td><?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
                             <td class="text-end">
@@ -223,6 +231,19 @@ body {
                         <input type="number" name="tempo_minutos" class="form-control" min="1" value="<?= (int) ($serviceFormValues['tempo_minutos'] ?? 50) ?>" required title="Tempo padrao usado para calcular o horario final dos atendimentos.">
                     </div>
 
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Tipo de agenda</label>
+                        <select name="tipo_agendamento" id="serviceScheduleTypeNew" class="form-select" title="Individual ocupa um horario por paciente. Grupo permite varios pacientes no mesmo horario.">
+                            <option value="individual" <?= ($serviceFormValues['tipo_agendamento'] ?? 'individual') === 'individual' ? 'selected' : '' ?>>Individual</option>
+                            <option value="grupo" <?= ($serviceFormValues['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'selected' : '' ?>>Grupo</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted">Capacidade por horario</label>
+                        <input type="number" name="capacidade_agendamento" id="serviceCapacityNew" class="form-control" min="1" value="<?= (int) ($serviceFormValues['capacidade_agendamento'] ?? 1) ?>" required title="Quantidade maxima de pacientes permitidos no mesmo horario quando o tipo for Grupo.">
+                    </div>
+
                     <div class="col-md-6 d-flex align-items-end">
                         <div class="form-check ps-1 pb-2">
                             <input class="form-check-input" type="checkbox" name="ativo" id="serviceActiveNew" <?= !isset($serviceFormValues['ativo']) || (int) $serviceFormValues['ativo'] === 1 ? 'checked' : '' ?> title="Servico ativo fica disponivel para novos agendamentos e vinculos.">
@@ -243,6 +264,7 @@ body {
     </div>
 </div>
 
+<script src="assets/list-export.js"></script>
 <script>
 document.addEventListener('keydown', function (event) {
     const modalElement = document.getElementById('serviceFormModal');
@@ -255,6 +277,20 @@ document.addEventListener('keydown', function (event) {
         form.requestSubmit();
     }
 });
+
+const serviceScheduleTypeNew = document.getElementById('serviceScheduleTypeNew');
+const serviceCapacityNew = document.getElementById('serviceCapacityNew');
+function syncServiceCapacityNew() {
+    if (!serviceScheduleTypeNew || !serviceCapacityNew) return;
+    if (serviceScheduleTypeNew.value === 'individual') {
+        serviceCapacityNew.value = '1';
+        serviceCapacityNew.readOnly = true;
+    } else {
+        serviceCapacityNew.readOnly = false;
+    }
+}
+serviceScheduleTypeNew?.addEventListener('change', syncServiceCapacityNew);
+syncServiceCapacityNew();
 </script>
 
 <?php if (!empty($autoOpenServiceModal)): ?>

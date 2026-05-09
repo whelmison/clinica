@@ -12,6 +12,8 @@ $guideFormValues = [
     'total_sessoes' => '',
     'valor_guia' => '',
     'data' => date('Y-m-d'),
+    'autorizada' => 0,
+    'status_operacional' => 'criada',
 ];
 $editGuideId = app_query_int('edit_id');
 $editGuide = null;
@@ -24,12 +26,17 @@ $guideFilters = [
     'profissional_id' => $isGuidePost ? app_post_int('filter_profissional_id') : app_query_int('profissional_id'),
     'status_guia' => trim((string) ($isGuidePost ? app_request_post('filter_status_guia', '') : app_request_query('status_guia', ''))),
     'status_financeiro' => trim((string) ($isGuidePost ? app_request_post('filter_status_financeiro', '') : app_request_query('status_financeiro', ''))),
+    'autorizada' => trim((string) ($isGuidePost ? app_request_post('filter_autorizada', '') : app_request_query('autorizada', ''))),
     'mes' => trim((string) ($isGuidePost ? app_request_post('filter_mes', '') : app_request_query('mes', ''))),
 ];
+$guideFilters['status_guia'] = $guideFilters['status_guia'] !== ''
+    ? app_normalize_guide_operational_status($guideFilters['status_guia'])
+    : '';
 $shouldLoadGuides = app_request_query('filtrar', '') === '1'
     || ($isGuidePost && app_request_post('filter_filtrar', '') === '1')
     || $editGuideId > 0;
 $professionalsForFilter = app_stmt_all($conn, 'SELECT id, nome FROM profissionais WHERE clinica_id = ? ORDER BY nome', 'i', [$clinicId]);
+$guideOperationalStatuses = app_guide_operational_statuses();
 
 if (!function_exists('app_legacy_guide_filter_query')) {
     function app_legacy_guide_filter_query(array $filters, array $extra = []): string
@@ -40,9 +47,33 @@ if (!function_exists('app_legacy_guide_filter_query')) {
             'profissional_id' => (int) ($filters['profissional_id'] ?? 0) ?: null,
             'status_guia' => $filters['status_guia'] ?? '',
             'status_financeiro' => $filters['status_financeiro'] ?? '',
+            'autorizada' => $filters['autorizada'] ?? '',
             'mes' => $filters['mes'] ?? '',
             'filtrar' => 1,
         ], $extra);
+    }
+}
+
+if (!function_exists('app_legacy_guide_filter_inputs')) {
+    function app_legacy_guide_filter_inputs(array $filters, bool $shouldLoadGuides): string
+    {
+        $inputs = [
+            'filter_paciente' => $filters['paciente'] ?? '',
+            'filter_guia' => $filters['guia'] ?? '',
+            'filter_profissional_id' => (int) ($filters['profissional_id'] ?? 0),
+            'filter_status_guia' => $filters['status_guia'] ?? '',
+            'filter_status_financeiro' => $filters['status_financeiro'] ?? '',
+            'filter_autorizada' => $filters['autorizada'] ?? '',
+            'filter_mes' => $filters['mes'] ?? '',
+            'filter_filtrar' => $shouldLoadGuides ? '1' : '',
+        ];
+        $html = '';
+
+        foreach ($inputs as $name => $value) {
+            $html .= '<input type="hidden" name="' . app_h($name) . '" value="' . app_h((string) $value) . '">' . PHP_EOL;
+        }
+
+        return $html;
     }
 }
 
@@ -60,7 +91,17 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
         'total_sessoes' => app_post_int('total_sessoes'),
         'valor_guia' => (string) ($_POST['valor_guia'] ?? ''),
         'data' => (string) ($_POST['data'] ?? date('Y-m-d')),
+        'autorizada' => isset($_POST['autorizada']) ? 1 : 0,
+        'status_operacional' => app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'criada')),
     ];
+
+    if ($guideFormValues['status_operacional'] === 'cancelada') {
+        $guideFormValues['autorizada'] = 0;
+    } elseif ($guideFormValues['status_operacional'] === 'autorizada') {
+        $guideFormValues['autorizada'] = 1;
+    } elseif ((int) $guideFormValues['autorizada'] === 1 && in_array($guideFormValues['status_operacional'], ['criada', 'aguardando_autorizacao'], true)) {
+        $guideFormValues['status_operacional'] = 'autorizada';
+    }
 
     if ($guideFormValues['paciente_id'] <= 0) {
         $guideMessage = 'Selecione o paciente.';
@@ -96,13 +137,15 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
                 FROM guias g
                 WHERE g.clinica_id = {$clinicId}
                 AND g.paciente_id = {$pacienteId}
+                AND g.profissional_id = {$profissionalId}
+                AND COALESCE(g.status_operacional, 'criada') NOT IN ('cancelada', 'finalizada')
                 AND (
                     SELECT COUNT(*) FROM atendimentos a WHERE a.clinica_id = g.clinica_id AND a.guia_id = g.id
                 ) < g.total_sessoes
             ")->fetch_assoc();
 
             if ((int) ($check['total'] ?? 0) > 0) {
-                $guideMessage = 'Este paciente ja possui uma guia em aberto.';
+                $guideMessage = 'Este paciente ja possui uma guia em aberto para este profissional.';
             } else {
                 $plano = $conn->query("
                     SELECT nome, valor_sessao
@@ -126,9 +169,10 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
                     $valorGuia = $valorSessao * $totalSessoes;
                 }
 
+                $statusOperacional = $conn->real_escape_string($guideFormValues['status_operacional']);
                 $ok = $conn->query("
-                    INSERT INTO guias (clinica_id, codigo, paciente_id, profissional_id, plano_id, total_sessoes, data, valor_guia, recebido)
-                    VALUES ({$clinicId}, '{$codigoEsc}', {$pacienteId}, {$profissionalId}, {$planoId}, {$totalSessoes}, '{$dataGuia}', {$valorGuia}, 0)
+                    INSERT INTO guias (clinica_id, codigo, paciente_id, profissional_id, plano_id, total_sessoes, data, valor_guia, recebido, autorizada, status_operacional)
+                    VALUES ({$clinicId}, '{$codigoEsc}', {$pacienteId}, {$profissionalId}, {$planoId}, {$totalSessoes}, '{$dataGuia}', {$valorGuia}, 0, " . (int) $guideFormValues['autorizada'] . ", '{$statusOperacional}')
                 ");
 
                 if ($ok) {
@@ -144,6 +188,29 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
     $autoOpenGuideModal = true;
 }
 
+if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'authorize_legacy_guide') {
+    if (!$canManageLegacyGuides) {
+        app_flash('danger', 'Sem permissao para autorizar guias.');
+        app_redirect('guias.php');
+    }
+
+    $guideId = app_post_int('guide_id');
+
+    if ($guideId <= 0) {
+        app_flash('danger', 'Guia nao encontrada.');
+    } else {
+        $ok = app_stmt_execute(
+            $conn,
+            'UPDATE guias SET autorizada = 1, status_operacional = ? WHERE clinica_id = ? AND id = ?',
+            'sii',
+            ['autorizada', $clinicId, $guideId]
+        );
+        app_flash($ok ? 'success' : 'danger', $ok ? 'Guia autorizada com sucesso.' : 'Nao foi possivel autorizar a guia.');
+    }
+
+    app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
+}
+
 if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_legacy_guide') {
     if (!$canManageLegacyGuides) {
         app_flash('danger', 'Sem permissao para editar guias.');
@@ -156,6 +223,16 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
     $data = (string) ($_POST['data'] ?? date('Y-m-d'));
     $total = app_post_int('total_sessoes');
     $valorManual = (string) ($_POST['valor_guia'] ?? '');
+    $autorizada = isset($_POST['autorizada']) ? 1 : 0;
+    $statusOperacional = app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'criada'));
+
+    if ($statusOperacional === 'cancelada') {
+        $autorizada = 0;
+    } elseif ($statusOperacional === 'autorizada') {
+        $autorizada = 1;
+    } elseif ($autorizada === 1 && in_array($statusOperacional, ['criada', 'aguardando_autorizacao'], true)) {
+        $statusOperacional = 'autorizada';
+    }
 
     $editGuide = app_stmt_one(
         $conn,
@@ -197,9 +274,9 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 
             $ok = app_stmt_execute(
                 $conn,
-                'UPDATE guias SET codigo = ?, profissional_id = ?, data = ?, total_sessoes = ?, valor_guia = ? WHERE clinica_id = ? AND id = ?',
-                'sisidii',
-                [$codigo, $profissionalId, $data, $total, $valorGuia, $clinicId, $guideId]
+                'UPDATE guias SET codigo = ?, profissional_id = ?, data = ?, total_sessoes = ?, valor_guia = ?, autorizada = ?, status_operacional = ? WHERE clinica_id = ? AND id = ?',
+                'sisidisii',
+                [$codigo, $profissionalId, $data, $total, $valorGuia, $autorizada, $statusOperacional, $clinicId, $guideId]
             );
 
             if ($ok) {
@@ -314,6 +391,12 @@ tfoot { font-weight: bold; background: #f8f9fa; }
 .status-finalizado { background: #d9f2e3; }
 .status-finalizando { background: #fff4cc; }
 .status-andamento { background: #d7eef7; }
+tr.status-muted { background: #f7f9fa; }
+tr.status-info { background: #d7eef7; }
+tr.status-warning { background: #fff4cc; }
+tr.status-success,
+tr.status-success-soft { background: #d9f2e3; }
+tr.status-danger { background: #ffe3e6; }
 
 .badge-status {
     display: inline-block;
@@ -326,6 +409,12 @@ tfoot { font-weight: bold; background: #f8f9fa; }
 .badge-finalizado { background: #198754; color: #fff; }
 .badge-finalizando { background: #ffc107; color: #5c4300; }
 .badge-andamento { background: #0dcaf0; color: #083c4b; }
+.badge-status.status-muted { background: #edf2f4; color: #526973; }
+.badge-status.status-info { background: #0dcaf0; color: #083c4b; }
+.badge-status.status-warning { background: #ffc107; color: #5c4300; }
+.badge-status.status-success { background: #198754; color: #fff; }
+.badge-status.status-success-soft { background: #d9f2e3; color: #146c43; }
+.badge-status.status-danger { background: #dc3545; color: #fff; }
 
 .guide-filter-card {
     border: 1px solid rgba(18, 73, 88, 0.08);
@@ -481,7 +570,7 @@ button, select, a { display: none !important; }
 </div>
 </div>
 
-<div class="col-md-2">
+<div class="col-md-1">
 <label class="form-label small text-muted">Guia</label>
 <input type="text" id="fGuia" name="guia" class="form-control" placeholder="Numero/codigo" value="<?= app_h($guideFilters['guia']) ?>">
 </div>
@@ -497,22 +586,31 @@ button, select, a { display: none !important; }
 </div>
 
 <div class="col-md-2">
-<label class="form-label small text-muted">Status guia</label>
+<label class="form-label small text-muted">Status operacional</label>
 <select id="fStatusGuia" name="status_guia" class="form-control">
-<option value="">Status Guia</option>
-<option value="Andamento" <?= $guideFilters['status_guia'] === 'Andamento' ? 'selected' : '' ?>>Andamento</option>
-<option value="Ultimas sessoes" <?= $guideFilters['status_guia'] === 'Ultimas sessoes' ? 'selected' : '' ?>>Ultimas sessoes</option>
-<option value="Finalizada" <?= $guideFilters['status_guia'] === 'Finalizada' ? 'selected' : '' ?>>Finalizada</option>
+<option value="">Todos</option>
+<?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
+<option value="<?= app_h($statusValue) ?>" <?= $guideFilters['status_guia'] === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
+<?php endforeach; ?>
 </select>
 </div>
 
-<div class="col-md-2">
+<div class="col-md-1">
 <label class="form-label small text-muted">Situacao</label>
 <select id="fStatusFin" name="status_financeiro" class="form-control">
 <option value="">Situacao</option>
 <option value="Aberta" <?= $guideFilters['status_financeiro'] === 'Aberta' ? 'selected' : '' ?>>Aberta</option>
 <option value="Parcial" <?= $guideFilters['status_financeiro'] === 'Parcial' ? 'selected' : '' ?>>Parcial</option>
 <option value="Paga" <?= $guideFilters['status_financeiro'] === 'Paga' ? 'selected' : '' ?>>Paga</option>
+</select>
+</div>
+
+<div class="col-md-1">
+<label class="form-label small text-muted">Autorizada</label>
+<select id="fAutorizada" name="autorizada" class="form-control">
+<option value="">Todas</option>
+<option value="1" <?= $guideFilters['autorizada'] === '1' ? 'selected' : '' ?>>Sim</option>
+<option value="0" <?= $guideFilters['autorizada'] === '0' ? 'selected' : '' ?>>Nao</option>
 </select>
 </div>
 
@@ -541,7 +639,8 @@ button, select, a { display: none !important; }
 <th>Sess</th>
 <th>Usadas</th>
 <th>Rest</th>
-<th>Status Guia</th>
+<th>Status operacional</th>
+<th>Autorizada</th>
 <th>Situacao</th>
 <th class="valor">Guia</th>
 <th class="valor">Fat</th>
@@ -575,6 +674,12 @@ if ($shouldLoadGuides):
 
     if ($guideFilters['profissional_id'] > 0) {
         $where[] = 'g.profissional_id = ' . (int) $guideFilters['profissional_id'];
+    }
+
+    if ($guideFilters['autorizada'] === '1') {
+        $where[] = 'g.autorizada = 1';
+    } elseif ($guideFilters['autorizada'] === '0') {
+        $where[] = 'g.autorizada = 0';
     }
 
     $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
@@ -613,21 +718,13 @@ while ($g = $res->fetch_assoc()):
     $valorFaturado = $faturadas * $valorSessao;
     $valorGlosado = $glosas * $valorSessao;
     $saldo = $valorFaturado - $g['recebido'];
+    $saldoBaixa = max(0, (float) $g['valor_guia'] - (float) $g['recebido']);
     $restantes = (int) $g['total_sessoes'] - (int) $usadas;
 
-    $statusGuia = 'Andamento';
-    $class = 'status-andamento';
-    $badgeStatusGuia = "<span class='badge-status badge-andamento'>Andamento</span>";
-
-    if ($restantes <= 0) {
-        $statusGuia = 'Finalizada';
-        $class = 'status-finalizado';
-        $badgeStatusGuia = "<span class='badge-status badge-finalizado'>Finalizada</span>";
-    } elseif ($restantes <= 2) {
-        $statusGuia = 'Ultimas sessoes';
-        $class = 'status-finalizando';
-        $badgeStatusGuia = "<span class='badge-status badge-finalizando'>Ultimas sessoes</span>";
-    }
+    $statusData = app_guide_operational_status_data($g);
+    $statusGuia = (string) $statusData['value'];
+    $class = (string) $statusData['class'];
+    $badgeStatusGuia = "<span class='badge-status {$class}'>" . app_h((string) $statusData['label']) . "</span>";
 
     $statusFin = 'Aberta';
     if ($g['recebido'] > 0 && $saldo > 0) $statusFin = 'Parcial';
@@ -647,6 +744,19 @@ while ($g = $res->fetch_assoc()):
     $codigoGuia = htmlspecialchars($g['codigo'] ?? '', ENT_QUOTES);
     $editGuideUrl = 'guias.php?' . app_legacy_guide_filter_query($guideFilters, ['edit_id' => (int) $g['id']]);
     $editGuideUrlEsc = htmlspecialchars($editGuideUrl, ENT_QUOTES);
+    $badgeAutorizada = (int) ($g['autorizada'] ?? 0) === 1
+        ? "<span class='badge-status badge-finalizado'>Sim</span>"
+        : "<span class='badge-status badge-finalizando'>Nao</span>";
+    $authorizeButton = '';
+
+    if ($canManageLegacyGuides && (int) ($g['autorizada'] ?? 0) !== 1 && $statusGuia !== 'cancelada') {
+        $authorizeButton = "<form method='POST' class='d-inline'>
+    <input type='hidden' name='action' value='authorize_legacy_guide'>
+    <input type='hidden' name='guide_id' value='{$g['id']}'>
+    " . app_legacy_guide_filter_inputs($guideFilters, $shouldLoadGuides) . "
+    <button type='submit' class='btn btn-sm btn-outline-success' title='Marcar esta guia como autorizada'>Autorizar</button>
+    </form>";
+    }
 
     echo "<tr class='$class'
     data-paciente='$pacienteNome'
@@ -655,10 +765,11 @@ while ($g = $res->fetch_assoc()):
     data-guia='$codigoGuia'
     data-statusguia='$statusGuia'
     data-statusfin='$statusFin'
+    data-autorizada='" . (int) ($g['autorizada'] ?? 0) . "'
     data-mes='$dataMes'
     data-data='{$g['data']}'
-    data-saldo='$saldo'
-    data-finalizada='" . ($statusGuia == 'Finalizada' ? 1 : 0) . "'
+    data-saldo='$saldoBaixa'
+    data-finalizada='" . ($statusGuia === 'finalizada' ? 1 : 0) . "'
     data-id='{$g['id']}'
     >
     <td>{$g['codigo']}</td>
@@ -669,6 +780,7 @@ while ($g = $res->fetch_assoc()):
     <td>$usadas</td>
     <td>$restantes</td>
     <td>$badgeStatusGuia</td>
+    <td>$badgeAutorizada</td>
     <td>$statusFin</td>
     <td class='valor'>" . number_format($g['valor_guia'], 2, ',', '.') . "</td>
     <td class='valor'>" . number_format($valorFaturado, 2, ',', '.') . "</td>
@@ -678,6 +790,7 @@ while ($g = $res->fetch_assoc()):
     <td class='acoes'>
     " . ($canManageLegacyGuides
         ? "<a href='{$editGuideUrlEsc}' class='btn btn-sm btn-outline-primary'>Editar</a>
+    {$authorizeButton}
     <form method='POST' action='excluir_guia.php' class='d-inline' onsubmit=\"return confirm('Excluir esta guia?')\">
     <input type='hidden' name='id' value='{$g['id']}'>
     <button type='submit' class='btn btn-sm btn-outline-danger'>Excluir</button>
@@ -690,7 +803,7 @@ endwhile;
 else:
 ?>
 <tr>
-<td colspan="15" class="text-center py-4 text-muted">
+<td colspan="16" class="text-center py-4 text-muted">
 Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guias.
 </td>
 </tr>
@@ -700,7 +813,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <tfoot>
 <tr>
-<td colspan="15" id="totais">Totais</td>
+<td colspan="16" id="totais">Totais</td>
 </tr>
 </tfoot>
 
@@ -733,6 +846,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <input type="hidden" name="filter_profissional_id" value="<?= (int) $guideFilters['profissional_id'] ?>">
 <input type="hidden" name="filter_status_guia" value="<?= app_h($guideFilters['status_guia']) ?>">
 <input type="hidden" name="filter_status_financeiro" value="<?= app_h($guideFilters['status_financeiro']) ?>">
+<input type="hidden" name="filter_autorizada" value="<?= app_h($guideFilters['autorizada']) ?>">
 <input type="hidden" name="filter_mes" value="<?= app_h($guideFilters['mes']) ?>">
 <input type="hidden" name="filter_filtrar" value="<?= $shouldLoadGuides ? '1' : '' ?>">
 
@@ -785,9 +899,26 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 
 <div class="col-md-6">
+<label class="form-label">Status operacional</label>
+<select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
+<?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
+<option value="<?= app_h($statusValue) ?>" <?= ($guideFormValues['status_operacional'] ?? 'criada') === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
+<?php endforeach; ?>
+</select>
+</div>
+
+<div class="col-md-6">
 <label class="form-label">Valor da guia</label>
 <input type="text" name="valor_guia" id="valor_guia" class="form-control readonly" value="<?= app_h($guideFormValues['valor_guia']) ?>"
        title="Calculado pelo valor da sessao vezes o total. No plano Particular pode ser preenchido manualmente.">
+</div>
+
+<div class="col-md-6 d-flex align-items-end">
+<div class="form-check pb-2">
+<input class="form-check-input" type="checkbox" name="autorizada" id="guiaAutorizada" <?= (int) ($guideFormValues['autorizada'] ?? 0) === 1 ? 'checked' : '' ?>
+       title="Somente guias autorizadas podem gerar atendimento realizado.">
+<label class="form-check-label" for="guiaAutorizada">Guia autorizada</label>
+</div>
 </div>
 </div>
 </form>
@@ -826,6 +957,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <input type="hidden" name="filter_profissional_id" value="<?= (int) $guideFilters['profissional_id'] ?>">
 <input type="hidden" name="filter_status_guia" value="<?= app_h($guideFilters['status_guia']) ?>">
 <input type="hidden" name="filter_status_financeiro" value="<?= app_h($guideFilters['status_financeiro']) ?>">
+<input type="hidden" name="filter_autorizada" value="<?= app_h($guideFilters['autorizada']) ?>">
 <input type="hidden" name="filter_mes" value="<?= app_h($guideFilters['mes']) ?>">
 <input type="hidden" name="filter_filtrar" value="<?= $shouldLoadGuides ? '1' : '' ?>">
 
@@ -871,8 +1003,26 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 
 <div class="col-md-3">
+<label class="form-label">Status operacional</label>
+<select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
+<?php $editStatusOperacional = app_normalize_guide_operational_status((string) ($editGuide['status_operacional'] ?? 'criada')); ?>
+<?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
+<option value="<?= app_h($statusValue) ?>" <?= $editStatusOperacional === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
+<?php endforeach; ?>
+</select>
+</div>
+
+<div class="col-md-3">
 <label class="form-label">Valor da guia</label>
 <input type="text" name="valor_guia" id="editValorGuia" class="form-control readonly" value="R$ <?= number_format((float) $editGuide['valor_guia'], 2, ',', '.') ?>" title="Calculado pelo valor da sessao vezes o total. No plano Particular pode ser preenchido manualmente.">
+</div>
+
+<div class="col-md-6 d-flex align-items-end">
+<div class="form-check pb-2">
+<input class="form-check-input" type="checkbox" name="autorizada" id="editGuiaAutorizada" <?= (int) ($editGuide['autorizada'] ?? 0) === 1 ? 'checked' : '' ?>
+       title="Somente guias autorizadas podem gerar atendimento realizado.">
+<label class="form-check-label" for="editGuiaAutorizada">Guia autorizada</label>
+</div>
 </div>
 </div>
 </form>
@@ -894,6 +1044,7 @@ let fGuia = document.getElementById("fGuia");
 let fProfissional = document.getElementById("fProfissional");
 let fStatusGuia = document.getElementById("fStatusGuia");
 let fStatusFin = document.getElementById("fStatusFin");
+let fAutorizada = document.getElementById("fAutorizada");
 let fMes = document.getElementById("fMes");
 
 function filtrar() {
@@ -902,6 +1053,7 @@ function filtrar() {
     let pr = fProfissional ? fProfissional.value : '';
     let sg = fStatusGuia.value;
     let sf = fStatusFin.value;
+    let au = fAutorizada ? fAutorizada.value : '';
     let m = fMes.value;
 
     rows.forEach(r => {
@@ -912,6 +1064,7 @@ function filtrar() {
         if (pr && r.dataset.profissionalId != pr) show = false;
         if (sg && r.dataset.statusguia != sg) show = false;
         if (sf && r.dataset.statusfin != sf) show = false;
+        if (au && r.dataset.autorizada != au) show = false;
         if (m && r.dataset.mes != m) show = false;
 
         r.style.display = show ? '' : 'none';
@@ -941,12 +1094,12 @@ function totais() {
     let prev = 0, fat = 0, glo = 0, rec = 0, sal = 0;
 
     rows.forEach(r => {
-        if (r.style.display != 'none' && r.children.length >= 14) {
-            prev += moedaParaNumero(r.children[9].innerText);
-            fat += moedaParaNumero(r.children[10].innerText);
-            glo += moedaParaNumero(r.children[11].innerText);
-            rec += moedaParaNumero(r.children[12].innerText);
-            sal += moedaParaNumero(r.children[13].innerText);
+        if (r.style.display != 'none' && r.children.length >= 15) {
+            prev += moedaParaNumero(r.children[10].innerText);
+            fat += moedaParaNumero(r.children[11].innerText);
+            glo += moedaParaNumero(r.children[12].innerText);
+            rec += moedaParaNumero(r.children[13].innerText);
+            sal += moedaParaNumero(r.children[14].innerText);
         }
     });
 
@@ -973,9 +1126,7 @@ function baixar(btn) {
         return;
     }
 
-    if (confirm("Dar baixa de R$ " + saldo.toFixed(2) + " ?")) {
-        window.location = "baixar_guia.php?id=" + tr.dataset.id;
-    }
+    window.location = "baixar_guia.php?id=" + tr.dataset.id + "&return_to=" + encodeURIComponent("guias.php" + window.location.search);
 }
 
 function limpar() {

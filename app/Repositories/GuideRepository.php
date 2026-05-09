@@ -53,7 +53,7 @@ final class GuideRepository
                            COUNT(*) AS total_atendimentos,
                            SUM(CASE WHEN status_atendimento = \'Glosado\' THEN 1 ELSE 0 END) AS total_glosas
                     FROM atendimentos
-                    WHERE clinica_id = :clinic_id
+                    WHERE clinica_id = :attendance_clinic_id
                     GROUP BY guia_id
                 ) att ON att.guia_id = g.id
                 ' . $whereSql . '
@@ -61,8 +61,10 @@ final class GuideRepository
                 LIMIT :limit OFFSET :offset';
 
         $stmt = $this->pdo->prepare($sql);
+        $queryParams = $params;
+        $queryParams[':attendance_clinic_id'] = $this->clinicId();
 
-        foreach ($params as $name => $value) {
+        foreach ($queryParams as $name => $value) {
             $stmt->bindValue($name, $value);
         }
 
@@ -97,12 +99,13 @@ final class GuideRepository
                        COUNT(*) AS total_atendimentos,
                        SUM(CASE WHEN status_atendimento = \'Glosado\' THEN 1 ELSE 0 END) AS total_glosas
                 FROM atendimentos
-                WHERE clinica_id = :clinic_id
+                WHERE clinica_id = :attendance_clinic_id
                 GROUP BY guia_id
              ) att ON att.guia_id = g.id
              ' . $whereSql . '
              LIMIT 1'
         );
+        $params[':attendance_clinic_id'] = $this->clinicId();
         $stmt->execute($params);
         $row = $stmt->fetch();
 
@@ -175,9 +178,9 @@ final class GuideRepository
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO guias
-                (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes)
+                (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
              VALUES
-                (:clinic_id, :codigo, :paciente_id, :plano_id, :total_sessoes, :data, :valor_guia, 0, :profissional_id, :tipo_guia, :lote_id, :convenio, :observacoes)'
+                (:clinic_id, :codigo, :paciente_id, :plano_id, :total_sessoes, :data, :valor_guia, 0, :profissional_id, :tipo_guia, :lote_id, :convenio, :observacoes, :autorizada, :status_operacional)'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
@@ -192,6 +195,8 @@ final class GuideRepository
             ':lote_id' => $data['lote_id'],
             ':convenio' => $data['convenio'],
             ':observacoes' => $data['observacoes'],
+            ':autorizada' => $data['autorizada'],
+            ':status_operacional' => $data['status_operacional'],
         ]);
 
         return (int) $this->pdo->lastInsertId();
@@ -211,7 +216,9 @@ final class GuideRepository
                  tipo_guia = :tipo_guia,
                  lote_id = :lote_id,
                  convenio = :convenio,
-                 observacoes = :observacoes
+                 observacoes = :observacoes,
+                 autorizada = :autorizada,
+                 status_operacional = :status_operacional
              WHERE clinica_id = :clinic_id AND id = :id'
         );
         $stmt->execute([
@@ -228,6 +235,8 @@ final class GuideRepository
             ':lote_id' => $data['lote_id'],
             ':convenio' => $data['convenio'],
             ':observacoes' => $data['observacoes'],
+            ':autorizada' => $data['autorizada'],
+            ':status_operacional' => $data['status_operacional'],
         ]);
     }
 
@@ -390,6 +399,7 @@ final class GuideRepository
             $patientId = (int) ($filters['paciente_id'] ?? 0);
             $professionalId = (int) ($filters['profissional_id'] ?? 0);
             $search = trim((string) ($filters['busca'] ?? ''));
+            $operationalStatus = app_normalize_guide_operational_status((string) ($filters['status_operacional'] ?? ''));
 
             if ($guideId > 0) {
                 $clauses[] = 'g.id = :guide_id';
@@ -407,13 +417,35 @@ final class GuideRepository
             }
 
             if ($search !== '') {
-                $clauses[] = '(g.codigo LIKE :search OR pa.nome LIKE :search OR pr.nome LIKE :search)';
-                $params[':search'] = '%' . $search . '%';
+                $clauses[] = '(g.codigo LIKE :search_code OR pa.nome LIKE :search_patient OR pr.nome LIKE :search_professional)';
+                $params[':search_code'] = '%' . $search . '%';
+                $params[':search_patient'] = '%' . $search . '%';
+                $params[':search_professional'] = '%' . $search . '%';
+            }
+
+            if (($filters['status_operacional'] ?? '') !== '') {
+                $clauses[] = $this->operationalStatusSql() . ' = :status_operacional';
+                $params[':status_operacional'] = $operationalStatus;
             }
         }
 
         $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
 
         return [$whereSql, $params];
+    }
+
+    private function operationalStatusSql(): string
+    {
+        $usedSql = '(SELECT COUNT(*) FROM atendimentos ax WHERE ax.clinica_id = g.clinica_id AND ax.guia_id = g.id)';
+
+        return "CASE
+            WHEN COALESCE(g.status_operacional, 'criada') = 'cancelada' THEN 'cancelada'
+            WHEN COALESCE(g.status_operacional, 'criada') = 'finalizada' OR (g.total_sessoes > 0 AND {$usedSql} >= g.total_sessoes) THEN 'finalizada'
+            WHEN COALESCE(g.status_operacional, 'criada') = 'ultimas_sessoes' OR ({$usedSql} > 0 AND (g.total_sessoes - {$usedSql}) <= 2) THEN 'ultimas_sessoes'
+            WHEN COALESCE(g.status_operacional, 'criada') = 'em_uso' OR {$usedSql} > 0 THEN 'em_uso'
+            WHEN COALESCE(g.status_operacional, 'criada') = 'autorizada' OR g.autorizada = 1 THEN 'autorizada'
+            WHEN COALESCE(g.status_operacional, 'criada') = 'aguardando_autorizacao' THEN 'aguardando_autorizacao'
+            ELSE 'criada'
+        END";
     }
 }

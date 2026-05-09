@@ -366,6 +366,8 @@ body {
 <div class="patient-top-actions">
 <button type="submit" form="patientFilterForm" name="filtrar" value="1" class="btn btn-light text-secondary">Filtrar</button>
 <a href="pacientes.php" class="btn btn-outline-light">Limpar filtro</a>
+<button type="button" class="btn btn-outline-light" data-export-list onclick="appExportList('patientsExportArea', 'jpg', 'pacientes')">Exportar JPG</button>
+<button type="button" class="btn btn-outline-light" data-export-list onclick="appExportList('patientsExportArea', 'pdf', 'pacientes')">Exportar PDF</button>
 <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#patientFormModal">+ Novo paciente</button>
 </div>
 </section>
@@ -395,7 +397,7 @@ body {
 </form>
 </div>
 
-<section class="patient-list-panel">
+<section class="patient-list-panel" id="patientsExportArea">
 <div class="patient-list-head">
 <h5>Lista enxuta</h5>
 <span>Use os filtros acima e clique em Filtrar</span>
@@ -580,6 +582,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os paci
     </div>
 </div>
 
+<script src="assets/list-export.js"></script>
 <script>
 document.addEventListener('keydown', function (event) {
     const modalElement = document.getElementById('patientFormModal');

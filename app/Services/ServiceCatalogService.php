@@ -54,14 +54,30 @@ final class ServiceCatalogService
     {
         $name = trim((string) ($input['nome'] ?? ''));
         $minutes = (int) ($input['tempo_minutos'] ?? 0);
+        $type = trim((string) ($input['tipo_agendamento'] ?? 'individual'));
+        $capacity = (int) ($input['capacidade_agendamento'] ?? 1);
 
         if ($name === '' || $minutes <= 0) {
             throw new InvalidArgumentException('Informe nome e duracao valida para o servico.');
         }
 
+        if (!in_array($type, ['individual', 'grupo'], true)) {
+            throw new InvalidArgumentException('Selecione se o servico e individual ou em grupo.');
+        }
+
+        if ($type === 'individual') {
+            $capacity = 1;
+        }
+
+        if ($capacity <= 0) {
+            throw new InvalidArgumentException('Informe uma capacidade valida para o servico.');
+        }
+
         return [
             'nome' => $name,
             'tempo_minutos' => $minutes,
+            'tipo_agendamento' => $type,
+            'capacidade_agendamento' => $capacity,
             'ativo' => isset($input['ativo']) ? 1 : 0,
         ];
     }

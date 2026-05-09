@@ -195,10 +195,10 @@ function app_page_access_map(): array
         'financeiro_mensal_api.php' => ['profissional', 'desenvolvedor'],
         'recebimentos.php' => ['profissional', 'desenvolvedor'],
         'administrativo.php' => ['administrativo', 'desenvolvedor'],
-        'administrativo_profissionais.php' => ['administrativo', 'desenvolvedor'],
+        'administrativo_profissionais.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'administrativo_clinica.php' => ['administrativo', 'desenvolvedor'],
-        'novo_profissional.php' => ['administrativo', 'desenvolvedor'],
-        'editar_profissional.php' => ['administrativo', 'desenvolvedor'],
+        'novo_profissional.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'editar_profissional.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'administrativo_usuarios.php' => ['administrativo', 'desenvolvedor'],
         'administrativo_permissoes.php' => ['administrativo', 'desenvolvedor'],
         'administrativo_financeiro.php' => ['administrativo', 'desenvolvedor'],
@@ -217,6 +217,7 @@ function app_page_access_map(): array
         'administrativo_lotes.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'secretaria.php' => ['secretaria', 'desenvolvedor'],
         'secretaria_agenda.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'secretaria_agenda_grupo.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'agenda_liberacao.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'agenda_lista_agendamentos.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'agenda_relatorio_gerencial.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
@@ -726,6 +727,8 @@ function app_install_schema(mysqli $conn): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         nome VARCHAR(180) NOT NULL,
         tempo_minutos INT NOT NULL,
+        tipo_agendamento VARCHAR(20) NOT NULL DEFAULT \'individual\',
+        capacidade_agendamento INT NOT NULL DEFAULT 1,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
@@ -753,6 +756,8 @@ function app_install_schema(mysqli $conn): void
         convenio VARCHAR(120) NULL,
         conta_receber_gerada TINYINT(1) NOT NULL DEFAULT 0,
         conta_receber_id INT NULL,
+        autorizada TINYINT(1) NOT NULL DEFAULT 0,
+        status_operacional VARCHAR(30) NOT NULL DEFAULT \'criada\',
         observacoes TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
@@ -795,6 +800,33 @@ function app_install_schema(mysqli $conn): void
         hora_fim TIME NOT NULL,
         observacoes TEXT NULL,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    $conn->query('CREATE TABLE IF NOT EXISTS agenda_grupos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        profissional_id INT NOT NULL,
+        servico_id INT NOT NULL,
+        data_agendamento DATE NOT NULL,
+        hora_inicio TIME NOT NULL,
+        hora_fim TIME NOT NULL,
+        capacidade INT NOT NULL DEFAULT 1,
+        observacoes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    $conn->query('CREATE TABLE IF NOT EXISTS agenda_grupo_pacientes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        grupo_id INT NOT NULL,
+        paciente_id INT NOT NULL,
+        guia_id INT NULL,
+        atendimento_id INT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT \'agendado\',
+        observacoes TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
@@ -880,6 +912,11 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'profissionais', 'imposto_fixo', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'imposto_percentual', 'DECIMAL(5,2) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'mensagem_padrao_whatsapp', 'TEXT NULL');
+    app_ensure_column($conn, 'servicos', 'tipo_agendamento', 'VARCHAR(20) NOT NULL DEFAULT \'individual\'');
+    app_ensure_column($conn, 'servicos', 'capacidade_agendamento', 'INT NOT NULL DEFAULT 1');
+
+    $hadGuideAuthorizationColumn = app_column_exists($conn, 'guias', 'autorizada');
+    $hadGuideOperationalStatusColumn = app_column_exists($conn, 'guias', 'status_operacional');
 
     app_ensure_column($conn, 'guias', 'codigo', 'VARCHAR(60) NULL');
     app_ensure_column($conn, 'guias', 'paciente_id', 'INT NOT NULL DEFAULT 0');
@@ -895,7 +932,29 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'guias', 'convenio', 'VARCHAR(120) NULL');
     app_ensure_column($conn, 'guias', 'conta_receber_gerada', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'guias', 'conta_receber_id', 'INT NULL');
+    app_ensure_column($conn, 'guias', 'autorizada', 'TINYINT(1) NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'guias', 'status_operacional', 'VARCHAR(30) NOT NULL DEFAULT \'criada\'');
     app_ensure_column($conn, 'guias', 'observacoes', 'TEXT NULL');
+
+    if (!$hadGuideAuthorizationColumn) {
+        $conn->query('UPDATE guias SET autorizada = 1');
+    }
+
+    if (!$hadGuideOperationalStatusColumn) {
+        $conn->query("UPDATE guias g
+            LEFT JOIN (
+                SELECT clinica_id, guia_id, COUNT(*) AS usadas
+                FROM atendimentos
+                GROUP BY clinica_id, guia_id
+            ) a ON a.guia_id = g.id AND a.clinica_id = g.clinica_id
+            SET g.status_operacional = CASE
+                WHEN g.total_sessoes > 0 AND COALESCE(a.usadas, 0) >= g.total_sessoes THEN 'finalizada'
+                WHEN COALESCE(a.usadas, 0) > 0 AND (g.total_sessoes - COALESCE(a.usadas, 0)) <= 2 THEN 'ultimas_sessoes'
+                WHEN COALESCE(a.usadas, 0) > 0 THEN 'em_uso'
+                WHEN g.autorizada = 1 THEN 'autorizada'
+                ELSE 'criada'
+            END");
+    }
 
     app_ensure_column($conn, 'atendimentos', 'guia_id', 'INT NULL');
     app_ensure_column($conn, 'atendimentos', 'agenda_id', 'INT NULL');
@@ -947,6 +1006,11 @@ function app_install_schema(mysqli $conn): void
     app_ensure_index($conn, 'agenda', 'idx_agenda_profissional_data', 'CREATE INDEX idx_agenda_profissional_data ON agenda (profissional_id, data_agendamento)');
     app_ensure_index($conn, 'agenda', 'idx_agenda_cliente', 'CREATE INDEX idx_agenda_cliente ON agenda (cliente_id)');
     app_ensure_index($conn, 'agenda_disponibilidade', 'idx_agenda_disponibilidade_profissional_data', 'CREATE INDEX idx_agenda_disponibilidade_profissional_data ON agenda_disponibilidade (profissional_id, data_disponivel)');
+    app_ensure_index($conn, 'agenda_grupos', 'idx_agenda_grupos_clinica_prof_data', 'CREATE INDEX idx_agenda_grupos_clinica_prof_data ON agenda_grupos (clinica_id, profissional_id, data_agendamento)');
+    app_ensure_index($conn, 'agenda_grupos', 'uq_agenda_grupos_slot', 'CREATE UNIQUE INDEX uq_agenda_grupos_slot ON agenda_grupos (clinica_id, profissional_id, servico_id, data_agendamento, hora_inicio)');
+    app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_grupo', 'CREATE INDEX idx_agenda_grupo_pacientes_grupo ON agenda_grupo_pacientes (grupo_id)');
+    app_ensure_index($conn, 'agenda_grupo_pacientes', 'uq_agenda_grupo_paciente', 'CREATE UNIQUE INDEX uq_agenda_grupo_paciente ON agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id)');
+    app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_atendimento', 'CREATE INDEX idx_agenda_grupo_pacientes_atendimento ON agenda_grupo_pacientes (atendimento_id)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_tipo_nome', 'CREATE INDEX idx_plano_contas_tipo_nome ON plano_contas (tipo, nome)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_codigo', 'CREATE INDEX idx_plano_contas_codigo ON plano_contas (codigo)');
     app_ensure_index($conn, 'centros_custo', 'idx_centros_custo_nome', 'CREATE INDEX idx_centros_custo_nome ON centros_custo (nome)');

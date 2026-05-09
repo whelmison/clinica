@@ -169,6 +169,8 @@ final class GuideService
         $convenio = trim((string) ($input['convenio'] ?? ''));
         $notes = trim((string) ($input['observacoes'] ?? ''));
         $batchId = !empty($input['lote_id']) ? (int) $input['lote_id'] : null;
+        $authorized = !empty($input['autorizada']) ? 1 : 0;
+        $operationalStatus = app_normalize_guide_operational_status((string) ($input['status_operacional'] ?? 'criada'));
 
         if ($patientId <= 0) {
             throw new InvalidArgumentException('Selecione um paciente valido.');
@@ -202,6 +204,16 @@ final class GuideService
             throw new InvalidArgumentException('Informe um valor valido para a guia.');
         }
 
+        if ($operationalStatus === 'cancelada') {
+            $authorized = 0;
+        } elseif ($operationalStatus === 'autorizada') {
+            $authorized = 1;
+        } elseif ($authorized === 1 && in_array($operationalStatus, ['criada', 'aguardando_autorizacao'], true)) {
+            $operationalStatus = 'autorizada';
+        } elseif ($authorized === 0 && $operationalStatus === 'autorizada') {
+            $operationalStatus = 'aguardando_autorizacao';
+        }
+
         return [
             'codigo' => $code,
             'paciente_id' => $patientId,
@@ -214,6 +226,8 @@ final class GuideService
             'lote_id' => $batchId,
             'convenio' => $convenio,
             'observacoes' => $notes,
+            'autorizada' => $authorized,
+            'status_operacional' => $operationalStatus,
         ];
     }
 
