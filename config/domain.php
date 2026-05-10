@@ -502,7 +502,6 @@ function app_guide_types(): array
 function app_guide_operational_statuses(): array
 {
     return [
-        'criada' => 'Criada',
         'aguardando_autorizacao' => 'Aguardando autorizacao',
         'autorizada' => 'Autorizada',
         'em_uso' => 'Em uso',
@@ -530,12 +529,16 @@ function app_normalize_guide_operational_status(?string $status): string
 
     $status = $aliases[$status] ?? $status;
 
-    return array_key_exists($status, app_guide_operational_statuses()) ? $status : 'criada';
+    if ($status === 'criada') {
+        return 'aguardando_autorizacao';
+    }
+
+    return array_key_exists($status, app_guide_operational_statuses()) ? $status : 'aguardando_autorizacao';
 }
 
 function app_guide_operational_status_data(array $guide): array
 {
-    $storedStatus = app_normalize_guide_operational_status((string) ($guide['status_operacional'] ?? 'criada'));
+    $storedStatus = app_normalize_guide_operational_status((string) ($guide['status_operacional'] ?? 'aguardando_autorizacao'));
     $usedSessions = (int) ($guide['total_atendimentos'] ?? $guide['usadas'] ?? $guide['sessoes_usadas'] ?? 0);
     $totalSessions = max(0, (int) ($guide['total_sessoes'] ?? 0));
     $remainingSessions = max(0, $totalSessions - $usedSessions);
@@ -565,7 +568,7 @@ function app_guide_operational_status_data(array $guide): array
         return ['value' => 'aguardando_autorizacao', 'label' => 'Aguardando autorizacao', 'class' => 'status-warning'];
     }
 
-    return ['value' => 'criada', 'label' => 'Criada', 'class' => 'status-muted'];
+    return ['value' => 'aguardando_autorizacao', 'label' => 'Aguardando autorizacao', 'class' => 'status-warning'];
 }
 
 function app_schedule_statuses(): array
@@ -880,7 +883,7 @@ function app_create_guide(mysqli $conn, array $data): array
     $code = trim((string) ($data['codigo'] ?? ''));
     $notes = trim((string) ($data['observacoes'] ?? ''));
     $authorized = !empty($data['autorizada']) ? 1 : 0;
-    $operationalStatus = app_normalize_guide_operational_status((string) ($data['status_operacional'] ?? 'criada'));
+    $operationalStatus = app_normalize_guide_operational_status((string) ($data['status_operacional'] ?? 'aguardando_autorizacao'));
 
     if ($patientId <= 0) {
         return ['ok' => false, 'message' => 'Nao permitir guia sem paciente.'];
@@ -922,7 +925,7 @@ function app_create_guide(mysqli $conn, array $data): array
         $authorized = 0;
     } elseif ($operationalStatus === 'autorizada') {
         $authorized = 1;
-    } elseif ($authorized === 1 && in_array($operationalStatus, ['criada', 'aguardando_autorizacao'], true)) {
+    } elseif ($authorized === 1 && $operationalStatus === 'aguardando_autorizacao') {
         $operationalStatus = 'autorizada';
     }
 

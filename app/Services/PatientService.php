@@ -48,14 +48,46 @@ final class PatientService
     private function normalize(array $input): array
     {
         $name = trim((string) ($input['nome'] ?? ''));
+        $cpf = trim((string) ($input['cpf'] ?? ''));
+        $birthInput = trim((string) ($input['data_nascimento'] ?? ''));
+        $birthDate = null;
 
         if ($name === '') {
             throw new InvalidArgumentException('Informe o nome do paciente.');
         }
 
+        if ($cpf !== '' && !\app_cpf_valid($cpf)) {
+            throw new InvalidArgumentException('Informe um CPF valido.');
+        }
+
+        if ($birthInput !== '') {
+            $birthDate = \app_parse_date_br($birthInput);
+
+            if ($birthDate === null) {
+                throw new InvalidArgumentException('Informe a data de nascimento no formato dd/mm/aaaa.');
+            }
+        }
+
+        $cepDigits = \app_only_digits((string) ($input['cep'] ?? ''));
+        $cep = strlen($cepDigits) === 8
+            ? substr($cepDigits, 0, 5) . '-' . substr($cepDigits, 5, 3)
+            : trim((string) ($input['cep'] ?? ''));
+
         return [
             'nome' => $name,
             'telefone' => trim((string) ($input['telefone'] ?? '')),
+            'cpf' => $cpf !== '' ? \app_format_cpf($cpf) : '',
+            'data_nascimento' => $birthDate,
+            'cep' => $cep,
+            'endereco' => trim((string) ($input['endereco'] ?? '')),
+            'numero' => trim((string) ($input['numero'] ?? '')),
+            'complemento' => trim((string) ($input['complemento'] ?? '')),
+            'bairro' => trim((string) ($input['bairro'] ?? '')),
+            'cidade' => trim((string) ($input['cidade'] ?? '')),
+            'estado' => strtoupper(substr(trim((string) ($input['estado'] ?? '')), 0, 2)),
+            'telefone_emergencia' => trim((string) ($input['telefone_emergencia'] ?? '')),
+            'observacoes' => trim((string) ($input['observacoes'] ?? '')),
+            'indicado_por' => trim((string) ($input['indicado_por'] ?? '')),
             'prontuario' => trim((string) ($input['prontuario'] ?? '')),
             'dia_preferencia' => trim((string) ($input['dia_preferencia'] ?? '')),
             'horario_preferencia' => trim((string) ($input['horario_preferencia'] ?? '')),

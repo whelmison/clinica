@@ -439,13 +439,13 @@ final class GuideRepository
         $usedSql = '(SELECT COUNT(*) FROM atendimentos ax WHERE ax.clinica_id = g.clinica_id AND ax.guia_id = g.id)';
 
         return "CASE
-            WHEN COALESCE(g.status_operacional, 'criada') = 'cancelada' THEN 'cancelada'
-            WHEN COALESCE(g.status_operacional, 'criada') = 'finalizada' OR (g.total_sessoes > 0 AND {$usedSql} >= g.total_sessoes) THEN 'finalizada'
-            WHEN COALESCE(g.status_operacional, 'criada') = 'ultimas_sessoes' OR ({$usedSql} > 0 AND (g.total_sessoes - {$usedSql}) <= 2) THEN 'ultimas_sessoes'
-            WHEN COALESCE(g.status_operacional, 'criada') = 'em_uso' OR {$usedSql} > 0 THEN 'em_uso'
-            WHEN COALESCE(g.status_operacional, 'criada') = 'autorizada' OR g.autorizada = 1 THEN 'autorizada'
-            WHEN COALESCE(g.status_operacional, 'criada') = 'aguardando_autorizacao' THEN 'aguardando_autorizacao'
-            ELSE 'criada'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'cancelada' THEN 'cancelada'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'finalizada' OR (g.total_sessoes > 0 AND {$usedSql} >= g.total_sessoes) THEN 'finalizada'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'ultimas_sessoes' OR ({$usedSql} > 0 AND (g.total_sessoes - {$usedSql}) <= 2) THEN 'ultimas_sessoes'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'em_uso' OR {$usedSql} > 0 THEN 'em_uso'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'autorizada' OR g.autorizada = 1 THEN 'autorizada'
+            WHEN COALESCE(g.status_operacional, 'aguardando_autorizacao') = 'aguardando_autorizacao' THEN 'aguardando_autorizacao'
+            ELSE 'aguardando_autorizacao'
         END";
     }
 }

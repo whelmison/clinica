@@ -298,7 +298,7 @@ if (!function_exists('app_group_active_guide')) {
                AND COALESCE(g.status_operacional, ?) NOT IN (?, ?)
              LIMIT 1',
             'siiiiiiisss',
-            ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $guideId, $patientId, $professionalId, 'criada', 'cancelada', 'finalizada']
+        ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $guideId, $patientId, $professionalId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
         );
 
         if (!$guide) {
@@ -338,7 +338,7 @@ if (!function_exists('app_group_authorized_guides')) {
              HAVING restantes > 0
              ORDER BY g.data DESC, g.id DESC',
             'siiiiiisss',
-            ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $patientId, $professionalId, 'criada', 'cancelada', 'finalizada']
+        ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $patientId, $professionalId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
         );
     }
 }

@@ -11,7 +11,7 @@ if ($pacienteId <= 0) {
     exit;
 }
 
-$where = ['g.clinica_id = ?', 'g.paciente_id = ?', 'g.autorizada = 1', "COALESCE(g.status_operacional, 'criada') <> 'cancelada'"];
+$where = ['g.clinica_id = ?', 'g.paciente_id = ?', 'g.autorizada = 1', "COALESCE(g.status_operacional, 'aguardando_autorizacao') <> 'cancelada'"];
 $whereTypes = 'ii';
 $whereParams = [app_active_clinic_id(), $pacienteId];
 $joinWhere = '';

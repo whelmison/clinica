@@ -170,7 +170,7 @@ final class ScheduleRepository
                AND g.paciente_id = :patient_id
                AND (g.profissional_id = :professional_id OR g.profissional_id IS NULL)
                AND g.autorizada = 1
-               AND COALESCE(g.status_operacional, \'criada\') NOT IN (\'cancelada\', \'finalizada\')
+              AND COALESCE(g.status_operacional, \'aguardando_autorizacao\') NOT IN (\'cancelada\', \'finalizada\')
              LIMIT 1'
         );
         $stmt->execute($params);

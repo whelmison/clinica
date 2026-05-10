@@ -23,6 +23,73 @@ function app_date_br(?string $date): string
     return $time ? date('d/m/Y', $time) : '-';
 }
 
+function app_only_digits(?string $value): string
+{
+    return preg_replace('/\D+/', '', (string) $value) ?: '';
+}
+
+function app_cpf_valid(?string $cpf): bool
+{
+    $digits = app_only_digits($cpf);
+
+    if (strlen($digits) !== 11 || preg_match('/^(\d)\1{10}$/', $digits)) {
+        return false;
+    }
+
+    for ($position = 9; $position <= 10; $position++) {
+        $sum = 0;
+
+        for ($index = 0; $index < $position; $index++) {
+            $sum += (int) $digits[$index] * (($position + 1) - $index);
+        }
+
+        $check = ($sum * 10) % 11;
+        $check = $check === 10 ? 0 : $check;
+
+        if ($check !== (int) $digits[$position]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function app_format_cpf(?string $cpf): string
+{
+    $digits = app_only_digits($cpf);
+
+    if (strlen($digits) !== 11) {
+        return trim((string) $cpf);
+    }
+
+    return substr($digits, 0, 3) . '.' . substr($digits, 3, 3) . '.' . substr($digits, 6, 3) . '-' . substr($digits, 9, 2);
+}
+
+function app_parse_date_br(?string $date): ?string
+{
+    $date = trim((string) $date);
+
+    if ($date === '') {
+        return null;
+    }
+
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        [$year, $month, $day] = array_map('intval', explode('-', $date));
+
+        return checkdate($month, $day, $year) ? sprintf('%04d-%02d-%02d', $year, $month, $day) : null;
+    }
+
+    if (!preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $date, $matches)) {
+        return null;
+    }
+
+    $day = (int) $matches[1];
+    $month = (int) $matches[2];
+    $year = (int) $matches[3];
+
+    return checkdate($month, $day, $year) ? sprintf('%04d-%02d-%02d', $year, $month, $day) : null;
+}
+
 function app_time_br(?string $time): string
 {
     if ($time === null || $time === '') {

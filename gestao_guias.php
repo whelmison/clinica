@@ -91,7 +91,7 @@ $guideFormValues = [
     'observacoes' => (string) ($selectedGuide['observacoes'] ?? ''),
     'lote_id' => (int) ($selectedGuide['lote_id'] ?? 0),
     'autorizada' => (int) ($selectedGuide['autorizada'] ?? 0),
-    'status_operacional' => (string) ($selectedGuide['status_operacional'] ?? 'criada'),
+    'status_operacional' => (string) ($selectedGuide['status_operacional'] ?? 'aguardando_autorizacao'),
 ];
 $autoOpenGuideModal = ($selectedGuide !== null && $canEditSelectedGuide) || app_query_int('open_new') === 1;
 
@@ -126,7 +126,7 @@ if ($requestMethod === 'POST') {
             'observacoes' => app_request_post('observacoes', '') ?? '',
             'lote_id' => app_post_int('lote_id'),
             'autorizada' => isset($_POST['autorizada']) ? 1 : 0,
-            'status_operacional' => app_request_post('status_operacional', 'criada') ?? 'criada',
+        'status_operacional' => app_request_post('status_operacional', 'aguardando_autorizacao') ?? 'aguardando_autorizacao',
         ];
         $result = $guideId > 0
             ? $guideService->update($guideId, $_POST, $currentUser)

@@ -13,7 +13,7 @@ $guideFormValues = [
     'valor_guia' => '',
     'data' => date('Y-m-d'),
     'autorizada' => 0,
-    'status_operacional' => 'criada',
+    'status_operacional' => 'aguardando_autorizacao',
 ];
 $editGuideId = app_query_int('edit_id');
 $editGuide = null;
@@ -92,14 +92,14 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
         'valor_guia' => (string) ($_POST['valor_guia'] ?? ''),
         'data' => (string) ($_POST['data'] ?? date('Y-m-d')),
         'autorizada' => isset($_POST['autorizada']) ? 1 : 0,
-        'status_operacional' => app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'criada')),
+        'status_operacional' => app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'aguardando_autorizacao')),
     ];
 
     if ($guideFormValues['status_operacional'] === 'cancelada') {
         $guideFormValues['autorizada'] = 0;
     } elseif ($guideFormValues['status_operacional'] === 'autorizada') {
         $guideFormValues['autorizada'] = 1;
-    } elseif ((int) $guideFormValues['autorizada'] === 1 && in_array($guideFormValues['status_operacional'], ['criada', 'aguardando_autorizacao'], true)) {
+    } elseif ((int) $guideFormValues['autorizada'] === 1 && $guideFormValues['status_operacional'] === 'aguardando_autorizacao') {
         $guideFormValues['status_operacional'] = 'autorizada';
     }
 
@@ -138,7 +138,7 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
                 WHERE g.clinica_id = {$clinicId}
                 AND g.paciente_id = {$pacienteId}
                 AND g.profissional_id = {$profissionalId}
-                AND COALESCE(g.status_operacional, 'criada') NOT IN ('cancelada', 'finalizada')
+                AND COALESCE(g.status_operacional, 'aguardando_autorizacao') NOT IN ('cancelada', 'finalizada')
                 AND (
                     SELECT COUNT(*) FROM atendimentos a WHERE a.clinica_id = g.clinica_id AND a.guia_id = g.id
                 ) < g.total_sessoes
@@ -224,13 +224,13 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
     $total = app_post_int('total_sessoes');
     $valorManual = (string) ($_POST['valor_guia'] ?? '');
     $autorizada = isset($_POST['autorizada']) ? 1 : 0;
-    $statusOperacional = app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'criada'));
+    $statusOperacional = app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'aguardando_autorizacao'));
 
     if ($statusOperacional === 'cancelada') {
         $autorizada = 0;
     } elseif ($statusOperacional === 'autorizada') {
         $autorizada = 1;
-    } elseif ($autorizada === 1 && in_array($statusOperacional, ['criada', 'aguardando_autorizacao'], true)) {
+    } elseif ($autorizada === 1 && $statusOperacional === 'aguardando_autorizacao') {
         $statusOperacional = 'autorizada';
     }
 
@@ -713,12 +713,15 @@ while ($g = $res->fetch_assoc()):
     $usadas = (int) $g['usadas'];
     $glosas = (int) $g['glosas'];
 
-    $faturadas = $usadas - $glosas;
+    $faturadas = max(0, $usadas - $glosas);
     $valorSessao = floatval($g['valor_sessao']);
-    $valorFaturado = $faturadas * $valorSessao;
+    if ($valorSessao <= 0 && (float) $g['valor_guia'] > 0 && (int) $g['total_sessoes'] > 0) {
+        $valorSessao = (float) $g['valor_guia'] / (int) $g['total_sessoes'];
+    }
+    $valorFaturado = min((float) $g['valor_guia'], $faturadas * $valorSessao);
     $valorGlosado = $glosas * $valorSessao;
-    $saldo = $valorFaturado - $g['recebido'];
-    $saldoBaixa = max(0, (float) $g['valor_guia'] - (float) $g['recebido']);
+    $saldo = max(0, min((float) $g['valor_guia'], $valorFaturado) - (float) $g['recebido']);
+    $saldoBaixa = $saldo;
     $restantes = (int) $g['total_sessoes'] - (int) $usadas;
 
     $statusData = app_guide_operational_status_data($g);
@@ -727,8 +730,9 @@ while ($g = $res->fetch_assoc()):
     $badgeStatusGuia = "<span class='badge-status {$class}'>" . app_h((string) $statusData['label']) . "</span>";
 
     $statusFin = 'Aberta';
-    if ($g['recebido'] > 0 && $saldo > 0) $statusFin = 'Parcial';
-    if ($saldo <= 0 && $g['recebido'] > 0) $statusFin = 'Paga';
+    if ((float) $g['recebido'] > 0) {
+        $statusFin = $statusGuia === 'finalizada' && $saldo <= 0 ? 'Paga' : 'Parcial';
+    }
 
     if ($guideFilters['status_guia'] !== '' && $guideFilters['status_guia'] !== $statusGuia) {
         continue;
@@ -769,6 +773,8 @@ while ($g = $res->fetch_assoc()):
     data-mes='$dataMes'
     data-data='{$g['data']}'
     data-saldo='$saldoBaixa'
+    data-valor-sessao='{$valorSessao}'
+    data-faturado='{$valorFaturado}'
     data-finalizada='" . ($statusGuia === 'finalizada' ? 1 : 0) . "'
     data-id='{$g['id']}'
     >
@@ -902,7 +908,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <label class="form-label">Status operacional</label>
 <select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
 <?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
-<option value="<?= app_h($statusValue) ?>" <?= ($guideFormValues['status_operacional'] ?? 'criada') === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
+<option value="<?= app_h($statusValue) ?>" <?= ($guideFormValues['status_operacional'] ?? 'aguardando_autorizacao') === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
 <?php endforeach; ?>
 </select>
 </div>
@@ -1005,7 +1011,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <div class="col-md-3">
 <label class="form-label">Status operacional</label>
 <select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
-<?php $editStatusOperacional = app_normalize_guide_operational_status((string) ($editGuide['status_operacional'] ?? 'criada')); ?>
+<?php $editStatusOperacional = app_normalize_guide_operational_status((string) ($editGuide['status_operacional'] ?? 'aguardando_autorizacao')); ?>
 <?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
 <option value="<?= app_h($statusValue) ?>" <?= $editStatusOperacional === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
 <?php endforeach; ?>
@@ -1113,16 +1119,17 @@ function totais() {
 
 function baixar(btn) {
     let tr = btn.closest("tr");
+    const status = tr.dataset.statusguia || '';
 
-    if (tr.dataset.finalizada != '1') {
-        alert("Guia nao finalizada!");
+    if (!['em_uso', 'ultimas_sessoes', 'finalizada'].includes(status)) {
+        alert("A baixa so pode ser feita a partir do status Em uso. Registre pelo menos um atendimento antes de baixar.");
         return;
     }
 
     let saldo = parseFloat(tr.dataset.saldo);
 
     if (saldo <= 0) {
-        alert("Ja paga!");
+        alert("Nao ha valor faturado disponivel para baixar nesta guia.");
         return;
     }
 

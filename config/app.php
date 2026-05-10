@@ -188,6 +188,8 @@ function app_page_access_map(): array
         'buscar_guias.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'guia_modal_dados.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'pacientes_busca.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'paciente_historico.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'paciente_fichas.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'guias.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'financeiro.php' => ['profissional', 'desenvolvedor'],
         'financeiro_mensal.php' => ['profissional', 'desenvolvedor'],
@@ -507,6 +509,8 @@ function app_ensure_multiclinic_schema(mysqli $conn, ?int $defaultClinicId = nul
         'lotes',
         'recebimentos',
         'config',
+        'paciente_fichas_avaliacao',
+        'paciente_fichas_evolucao',
         'contas_pagar',
         'contas_receber',
         'contas_financeiras',
@@ -682,6 +686,18 @@ function app_install_schema(mysqli $conn): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         nome VARCHAR(255) NOT NULL,
         telefone VARCHAR(30) NULL,
+        cpf VARCHAR(14) NULL,
+        data_nascimento DATE NULL,
+        cep VARCHAR(9) NULL,
+        endereco VARCHAR(255) NULL,
+        numero VARCHAR(30) NULL,
+        complemento VARCHAR(120) NULL,
+        bairro VARCHAR(120) NULL,
+        cidade VARCHAR(120) NULL,
+        estado VARCHAR(2) NULL,
+        telefone_emergencia VARCHAR(30) NULL,
+        observacoes TEXT NULL,
+        indicado_por VARCHAR(180) NULL,
         convenio VARCHAR(120) NULL,
         valor_sessao DECIMAL(10,2) DEFAULT 0,
         prontuario VARCHAR(120) NULL,
@@ -757,7 +773,7 @@ function app_install_schema(mysqli $conn): void
         conta_receber_gerada TINYINT(1) NOT NULL DEFAULT 0,
         conta_receber_id INT NULL,
         autorizada TINYINT(1) NOT NULL DEFAULT 0,
-        status_operacional VARCHAR(30) NOT NULL DEFAULT \'criada\',
+        status_operacional VARCHAR(30) NOT NULL DEFAULT \'aguardando_autorizacao\',
         observacoes TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
@@ -831,6 +847,45 @@ function app_install_schema(mysqli $conn): void
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
+    $conn->query('CREATE TABLE IF NOT EXISTS paciente_fichas_avaliacao (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        paciente_id INT NOT NULL,
+        profissional_id INT NULL,
+        data_avaliacao DATE NULL,
+        sexo VARCHAR(30) NULL,
+        queixa_principal TEXT NULL,
+        historia_pregressa TEXT NULL,
+        historia_atual TEXT NULL,
+        lesoes_previas TEXT NULL,
+        historia_cirurgica TEXT NULL,
+        avaliacao_postura TEXT NULL,
+        amplitude_movimento TEXT NULL,
+        forca_muscular TEXT NULL,
+        sensibilidade TEXT NULL,
+        equilibrio_marcha TEXT NULL,
+        avds TEXT NULL,
+        objetivos TEXT NULL,
+        condutas TEXT NULL,
+        observacoes_finais TEXT NULL,
+        assinatura_fisioterapeuta VARCHAR(180) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    $conn->query('CREATE TABLE IF NOT EXISTS paciente_fichas_evolucao (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        paciente_id INT NOT NULL,
+        atendimento_id INT NULL,
+        profissional_id INT NULL,
+        data_evolucao DATE NULL,
+        condutas_observacoes TEXT NULL,
+        assinatura_fisioterapeuta VARCHAR(180) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
     $conn->query('CREATE TABLE IF NOT EXISTS plano_contas (
         id INT AUTO_INCREMENT PRIMARY KEY,
         nome VARCHAR(180) NOT NULL,
@@ -898,6 +953,18 @@ function app_install_schema(mysqli $conn): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
     app_ensure_column($conn, 'pacientes', 'telefone', 'VARCHAR(30) NULL');
+    app_ensure_column($conn, 'pacientes', 'cpf', 'VARCHAR(14) NULL');
+    app_ensure_column($conn, 'pacientes', 'data_nascimento', 'DATE NULL');
+    app_ensure_column($conn, 'pacientes', 'cep', 'VARCHAR(9) NULL');
+    app_ensure_column($conn, 'pacientes', 'endereco', 'VARCHAR(255) NULL');
+    app_ensure_column($conn, 'pacientes', 'numero', 'VARCHAR(30) NULL');
+    app_ensure_column($conn, 'pacientes', 'complemento', 'VARCHAR(120) NULL');
+    app_ensure_column($conn, 'pacientes', 'bairro', 'VARCHAR(120) NULL');
+    app_ensure_column($conn, 'pacientes', 'cidade', 'VARCHAR(120) NULL');
+    app_ensure_column($conn, 'pacientes', 'estado', 'VARCHAR(2) NULL');
+    app_ensure_column($conn, 'pacientes', 'telefone_emergencia', 'VARCHAR(30) NULL');
+    app_ensure_column($conn, 'pacientes', 'observacoes', 'TEXT NULL');
+    app_ensure_column($conn, 'pacientes', 'indicado_por', 'VARCHAR(180) NULL');
     app_ensure_column($conn, 'pacientes', 'convenio', 'VARCHAR(120) NULL');
     app_ensure_column($conn, 'pacientes', 'valor_sessao', 'DECIMAL(10,2) DEFAULT 0');
     app_ensure_column($conn, 'pacientes', 'prontuario', 'VARCHAR(120) NULL');
@@ -933,7 +1000,7 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'guias', 'conta_receber_gerada', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'guias', 'conta_receber_id', 'INT NULL');
     app_ensure_column($conn, 'guias', 'autorizada', 'TINYINT(1) NOT NULL DEFAULT 0');
-    app_ensure_column($conn, 'guias', 'status_operacional', 'VARCHAR(30) NOT NULL DEFAULT \'criada\'');
+    app_ensure_column($conn, 'guias', 'status_operacional', 'VARCHAR(30) NOT NULL DEFAULT \'aguardando_autorizacao\'');
     app_ensure_column($conn, 'guias', 'observacoes', 'TEXT NULL');
 
     if (!$hadGuideAuthorizationColumn) {
@@ -952,9 +1019,11 @@ function app_install_schema(mysqli $conn): void
                 WHEN COALESCE(a.usadas, 0) > 0 AND (g.total_sessoes - COALESCE(a.usadas, 0)) <= 2 THEN 'ultimas_sessoes'
                 WHEN COALESCE(a.usadas, 0) > 0 THEN 'em_uso'
                 WHEN g.autorizada = 1 THEN 'autorizada'
-                ELSE 'criada'
+                ELSE 'aguardando_autorizacao'
             END");
     }
+    $conn->query("UPDATE guias SET status_operacional = 'aguardando_autorizacao' WHERE status_operacional IS NULL OR status_operacional = '' OR status_operacional = 'criada'");
+    @$conn->query("ALTER TABLE guias ALTER status_operacional SET DEFAULT 'aguardando_autorizacao'");
 
     app_ensure_column($conn, 'atendimentos', 'guia_id', 'INT NULL');
     app_ensure_column($conn, 'atendimentos', 'agenda_id', 'INT NULL');
@@ -1011,6 +1080,8 @@ function app_install_schema(mysqli $conn): void
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_grupo', 'CREATE INDEX idx_agenda_grupo_pacientes_grupo ON agenda_grupo_pacientes (grupo_id)');
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'uq_agenda_grupo_paciente', 'CREATE UNIQUE INDEX uq_agenda_grupo_paciente ON agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id)');
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_atendimento', 'CREATE INDEX idx_agenda_grupo_pacientes_atendimento ON agenda_grupo_pacientes (atendimento_id)');
+    app_ensure_index($conn, 'paciente_fichas_avaliacao', 'idx_fichas_avaliacao_paciente', 'CREATE INDEX idx_fichas_avaliacao_paciente ON paciente_fichas_avaliacao (clinica_id, paciente_id, data_avaliacao)');
+    app_ensure_index($conn, 'paciente_fichas_evolucao', 'idx_fichas_evolucao_paciente', 'CREATE INDEX idx_fichas_evolucao_paciente ON paciente_fichas_evolucao (clinica_id, paciente_id, data_evolucao)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_tipo_nome', 'CREATE INDEX idx_plano_contas_tipo_nome ON plano_contas (tipo, nome)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_codigo', 'CREATE INDEX idx_plano_contas_codigo ON plano_contas (codigo)');
     app_ensure_index($conn, 'centros_custo', 'idx_centros_custo_nome', 'CREATE INDEX idx_centros_custo_nome ON centros_custo (nome)');

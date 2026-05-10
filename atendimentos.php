@@ -86,7 +86,7 @@ function app_attendance_find(mysqli $conn, int $attendanceId): ?array
 
 function app_attendance_available_guide(mysqli $conn, int $guideId): ?array
 {
-    $where = ['g.clinica_id = ?', 'g.id = ?', "COALESCE(g.status_operacional, 'criada') NOT IN ('cancelada', 'finalizada')"];
+    $where = ['g.clinica_id = ?', 'g.id = ?', "COALESCE(g.status_operacional, 'aguardando_autorizacao') NOT IN ('cancelada', 'finalizada')"];
     $types = 'ii';
     $params = [app_active_clinic_id(), $guideId];
     app_attendance_professional_where($where, $types, $params);

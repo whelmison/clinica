@@ -11,6 +11,20 @@ if ($id <= 0) {
     app_redirect('pacientes.php');
 }
 
+$linkedSheets = app_stmt_one(
+    $conn,
+    'SELECT
+        (SELECT COUNT(*) FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ?) +
+        (SELECT COUNT(*) FROM paciente_fichas_evolucao WHERE clinica_id = ? AND paciente_id = ?) AS total',
+    'iiii',
+    [app_active_clinic_id(), $id, app_active_clinic_id(), $id]
+);
+
+if ((int) ($linkedSheets['total'] ?? 0) > 0) {
+    app_flash('danger', 'Nao e possivel excluir este paciente pois ele possui fichas vinculadas.');
+    app_redirect('pacientes.php');
+}
+
 $pdo = app_pdo();
 
 try {

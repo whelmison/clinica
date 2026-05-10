@@ -170,7 +170,7 @@ final class GuideService
         $notes = trim((string) ($input['observacoes'] ?? ''));
         $batchId = !empty($input['lote_id']) ? (int) $input['lote_id'] : null;
         $authorized = !empty($input['autorizada']) ? 1 : 0;
-        $operationalStatus = app_normalize_guide_operational_status((string) ($input['status_operacional'] ?? 'criada'));
+        $operationalStatus = app_normalize_guide_operational_status((string) ($input['status_operacional'] ?? 'aguardando_autorizacao'));
 
         if ($patientId <= 0) {
             throw new InvalidArgumentException('Selecione um paciente valido.');
@@ -208,7 +208,7 @@ final class GuideService
             $authorized = 0;
         } elseif ($operationalStatus === 'autorizada') {
             $authorized = 1;
-        } elseif ($authorized === 1 && in_array($operationalStatus, ['criada', 'aguardando_autorizacao'], true)) {
+        } elseif ($authorized === 1 && $operationalStatus === 'aguardando_autorizacao') {
             $operationalStatus = 'autorizada';
         } elseif ($authorized === 0 && $operationalStatus === 'autorizada') {
             $operationalStatus = 'aguardando_autorizacao';

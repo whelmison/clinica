@@ -38,6 +38,9 @@ final class PatientRepository
                 p.id,
                 p.nome,
                 p.telefone,
+                p.cpf,
+                p.data_nascimento,
+                p.telefone_emergencia,
                 p.prontuario,
                 p.dia_preferencia,
                 p.horario_preferencia,
@@ -102,7 +105,24 @@ final class PatientRepository
     public function find(int $patientId): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, nome, telefone, prontuario, dia_preferencia, horario_preferencia
+            'SELECT id,
+                    nome,
+                    telefone,
+                    cpf,
+                    data_nascimento,
+                    cep,
+                    endereco,
+                    numero,
+                    complemento,
+                    bairro,
+                    cidade,
+                    estado,
+                    telefone_emergencia,
+                    observacoes,
+                    indicado_por,
+                    prontuario,
+                    dia_preferencia,
+                    horario_preferencia
              FROM pacientes
              WHERE clinica_id = :clinic_id AND id = :id
              LIMIT 1'
@@ -116,13 +136,62 @@ final class PatientRepository
     public function create(array $data): int
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO pacientes (clinica_id, nome, telefone, prontuario, dia_preferencia, horario_preferencia)
-             VALUES (:clinic_id, :nome, :telefone, :prontuario, :dia_preferencia, :horario_preferencia)'
+            'INSERT INTO pacientes (
+                clinica_id,
+                nome,
+                telefone,
+                cpf,
+                data_nascimento,
+                cep,
+                endereco,
+                numero,
+                complemento,
+                bairro,
+                cidade,
+                estado,
+                telefone_emergencia,
+                observacoes,
+                indicado_por,
+                prontuario,
+                dia_preferencia,
+                horario_preferencia
+            ) VALUES (
+                :clinic_id,
+                :nome,
+                :telefone,
+                :cpf,
+                :data_nascimento,
+                :cep,
+                :endereco,
+                :numero,
+                :complemento,
+                :bairro,
+                :cidade,
+                :estado,
+                :telefone_emergencia,
+                :observacoes,
+                :indicado_por,
+                :prontuario,
+                :dia_preferencia,
+                :horario_preferencia
+            )'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
             ':nome' => $data['nome'],
             ':telefone' => $data['telefone'],
+            ':cpf' => $data['cpf'],
+            ':data_nascimento' => $data['data_nascimento'],
+            ':cep' => $data['cep'],
+            ':endereco' => $data['endereco'],
+            ':numero' => $data['numero'],
+            ':complemento' => $data['complemento'],
+            ':bairro' => $data['bairro'],
+            ':cidade' => $data['cidade'],
+            ':estado' => $data['estado'],
+            ':telefone_emergencia' => $data['telefone_emergencia'],
+            ':observacoes' => $data['observacoes'],
+            ':indicado_por' => $data['indicado_por'],
             ':prontuario' => $data['prontuario'],
             ':dia_preferencia' => $data['dia_preferencia'],
             ':horario_preferencia' => $data['horario_preferencia'],
@@ -137,6 +206,18 @@ final class PatientRepository
             'UPDATE pacientes
              SET nome = :nome,
                  telefone = :telefone,
+                 cpf = :cpf,
+                 data_nascimento = :data_nascimento,
+                 cep = :cep,
+                 endereco = :endereco,
+                 numero = :numero,
+                 complemento = :complemento,
+                 bairro = :bairro,
+                 cidade = :cidade,
+                 estado = :estado,
+                 telefone_emergencia = :telefone_emergencia,
+                 observacoes = :observacoes,
+                 indicado_por = :indicado_por,
                  prontuario = :prontuario,
                  dia_preferencia = :dia_preferencia,
                  horario_preferencia = :horario_preferencia
@@ -147,6 +228,18 @@ final class PatientRepository
             ':id' => $patientId,
             ':nome' => $data['nome'],
             ':telefone' => $data['telefone'],
+            ':cpf' => $data['cpf'],
+            ':data_nascimento' => $data['data_nascimento'],
+            ':cep' => $data['cep'],
+            ':endereco' => $data['endereco'],
+            ':numero' => $data['numero'],
+            ':complemento' => $data['complemento'],
+            ':bairro' => $data['bairro'],
+            ':cidade' => $data['cidade'],
+            ':estado' => $data['estado'],
+            ':telefone_emergencia' => $data['telefone_emergencia'],
+            ':observacoes' => $data['observacoes'],
+            ':indicado_por' => $data['indicado_por'],
             ':prontuario' => $data['prontuario'],
             ':dia_preferencia' => $data['dia_preferencia'],
             ':horario_preferencia' => $data['horario_preferencia'],

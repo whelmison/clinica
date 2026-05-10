@@ -665,7 +665,7 @@ body {
                     <div class="col-md-4">
                         <label class="form-label">Status operacional</label>
                         <select name="status_operacional" class="form-select" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
-                            <?php $selectedOperationalStatus = app_normalize_guide_operational_status((string) ($guideFormValues['status_operacional'] ?? 'criada')); ?>
+                            <?php $selectedOperationalStatus = app_normalize_guide_operational_status((string) ($guideFormValues['status_operacional'] ?? 'aguardando_autorizacao')); ?>
                             <?php foreach (app_guide_operational_statuses() as $statusValue => $statusLabel): ?>
                                 <option value="<?= app_h($statusValue) ?>" <?= $selectedOperationalStatus === $statusValue ? 'selected' : '' ?>>
                                     <?= app_h($statusLabel) ?>

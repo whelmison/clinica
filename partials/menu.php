@@ -98,7 +98,7 @@ $linksPorPerfil = [
         ['label' => 'Profissionais', 'href' => 'administrativo_profissionais.php', 'pages' => ['administrativo_profissionais.php', 'novo_profissional.php', 'editar_profissional.php']],
         ['label' => 'Atendimentos', 'href' => 'atendimentos.php', 'pages' => ['atendimentos.php', 'novo_atendimento.php', 'editar_atendimento.php']],
         ['label' => 'Guias', 'href' => 'guias.php', 'pages' => ['guias.php', 'nova_guia.php', 'editar_guia.php', 'gestao_guias.php']],
-        ['label' => 'Pacientes', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php']],
+        ['label' => 'Pacientes', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php', 'paciente_historico.php', 'paciente_fichas.php']],
         ['label' => 'Faturamento', 'href' => 'administrativo_lotes.php', 'pages' => ['administrativo_lotes.php']],
         ['label' => 'Relatorios', 'href' => 'relatorios.php', 'pages' => ['relatorios.php', 'agenda_relatorio_gerencial.php']],
     ],
@@ -109,7 +109,7 @@ $linksPorPerfil = [
         ['label' => 'Permissoes', 'href' => 'administrativo_permissoes.php', 'pages' => ['administrativo_permissoes.php']],
         ['label' => 'Financeiro', 'href' => 'administrativo_financeiro.php', 'pages' => ['administrativo_financeiro.php', 'financeiro_plano_contas.php', 'financeiro_centros_custo.php', 'financeiro_contas_financeiras.php', 'financeiro_contas_pagar.php', 'financeiro_contas_receber.php', 'relatorio_financeiro_fechamento.php', 'novo_plano_contas.php', 'editar_plano_contas.php', 'nova_conta_pagar.php', 'editar_conta_pagar.php', 'nova_conta_receber.php', 'editar_conta_receber.php']],
         ['label' => 'Guias', 'href' => 'guias.php', 'pages' => ['guias.php', 'nova_guia.php', 'editar_guia.php', 'gestao_guias.php']],
-        ['label' => 'Pacientes', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php']],
+        ['label' => 'Pacientes', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php', 'paciente_historico.php', 'paciente_fichas.php']],
         ['label' => 'Planos', 'href' => 'planos.php', 'pages' => ['planos.php', 'editar_plano.php']],
         ['label' => 'Faturamento', 'href' => 'administrativo_lotes.php', 'pages' => ['administrativo_lotes.php']],
         ['label' => 'Relatorios', 'href' => 'relatorios.php', 'pages' => ['relatorios.php']],
@@ -120,7 +120,7 @@ $linksPorPerfil = [
         ['label' => 'Secretaria', 'href' => 'secretaria.php', 'pages' => ['secretaria.php', 'secretaria_agenda.php', 'secretaria_agenda_grupo.php', 'agenda_liberacao.php', 'agenda_lista_agendamentos.php', 'agenda_relatorio_gerencial.php', 'secretaria_servicos.php', 'novo_servico.php', 'editar_servico.php', 'atendimentos.php', 'novo_atendimento.php', 'editar_atendimento.php', 'gestao_guias.php', 'relatorios.php']],
         ['label' => 'Administrativo', 'href' => 'administrativo.php', 'pages' => ['administrativo.php', 'administrativo_clinica.php', 'administrativo_profissionais.php', 'administrativo_usuarios.php', 'administrativo_permissoes.php', 'administrativo_financeiro.php', 'financeiro_plano_contas.php', 'financeiro_centros_custo.php', 'financeiro_contas_financeiras.php', 'financeiro_contas_pagar.php', 'financeiro_contas_receber.php', 'relatorio_financeiro_fechamento.php', 'administrativo_lotes.php', 'relatorios.php']],
         ['label' => 'Permissoes', 'href' => 'administrativo_permissoes.php', 'pages' => ['administrativo_permissoes.php']],
-        ['label' => 'Legado', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php', 'planos.php', 'editar_plano.php', 'nova_guia.php', 'editar_guia.php']],
+        ['label' => 'Legado', 'href' => 'pacientes.php', 'pages' => ['pacientes.php', 'novo_paciente.php', 'editar_paciente.php', 'paciente_historico.php', 'paciente_fichas.php', 'planos.php', 'editar_plano.php', 'nova_guia.php', 'editar_guia.php']],
     ],
 ];
 
