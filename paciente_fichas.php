@@ -1,6 +1,8 @@
 <?php
 include 'config/db.php';
 
+app_install_schema($conn);
+
 $clinicId = app_active_clinic_id();
 $patientId = app_request_method() === 'POST' ? app_post_int('paciente_id') : app_query_int('paciente_id');
 $activeTab = app_request_query('tab', 'avaliacao') ?? 'avaliacao';
@@ -58,8 +60,216 @@ function patient_sheet_summary(?string $value, int $limit): string
     return strlen($value) > $limit ? substr($value, 0, max(0, $limit - 3)) . '...' : $value;
 }
 
+function patient_evaluation_groups(): array
+{
+    return [
+        'postura' => [
+            'title' => 'Avaliacao da postura',
+            'legacy' => 'avaliacao_postura',
+            'fields' => [
+                'postura_observacoes_gerais' => ['label' => 'Observacoes gerais', 'options' => ['Normal', 'Alterada', 'Outra']],
+                'postura_cabeca' => ['label' => 'Alinhamento da cabeca', 'options' => ['Normal', 'Anteriorizada', 'Inclinada para um lado', 'Outro']],
+                'postura_ombros' => ['label' => 'Alinhamento dos ombros', 'options' => ['Normal', 'Elevados', 'Rotacao interna', 'Rotacao externa', 'Outro']],
+                'postura_coluna' => ['label' => 'Alinhamento da coluna vertebral', 'options' => ['Normal', 'Hiperlordose', 'Hipercifose', 'Escoliose', 'Outro']],
+                'postura_pelve' => ['label' => 'Alinhamento da pelve', 'options' => ['Normal', 'Inclinacao anterior', 'Inclinacao posterior', 'Inclinacao lateral', 'Outro']],
+                'postura_membros' => ['label' => 'Alinhamento dos membros superiores e inferiores', 'options' => ['Normal', 'Desvio', 'Outro']],
+            ],
+        ],
+        'amplitude' => [
+            'title' => 'Avaliacao da amplitude de movimento (AM)',
+            'legacy' => 'amplitude_movimento',
+            'fields' => [
+                'amplitude_cervical' => ['label' => 'Cervical', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_ombro' => ['label' => 'Ombro', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_cotovelo' => ['label' => 'Cotovelo', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_punho_mao' => ['label' => 'Punho e mao', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_coluna' => ['label' => 'Coluna vertebral', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_quadril' => ['label' => 'Quadril', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_joelho' => ['label' => 'Joelho', 'options' => ['Normal', 'Restrita', 'Outra']],
+                'amplitude_tornozelo_pe' => ['label' => 'Tornozelo e pe', 'options' => ['Normal', 'Restrita', 'Outra']],
+            ],
+        ],
+        'forca' => [
+            'title' => 'Avaliacao da forca muscular',
+            'legacy' => 'forca_muscular',
+            'fields' => [
+                'forca_cervicais' => ['label' => 'Musculos cervicais', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_ombro' => ['label' => 'Musculos do ombro', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_cotovelo' => ['label' => 'Musculos do cotovelo', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_punho_mao' => ['label' => 'Musculos do punho e mao', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_coluna' => ['label' => 'Musculos da coluna vertebral', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_quadril' => ['label' => 'Musculos do quadril', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_joelho' => ['label' => 'Musculos do joelho', 'options' => ['Normal', 'Fraca', 'Outra']],
+                'forca_tornozelo_pe' => ['label' => 'Musculos do tornozelo e pe', 'options' => ['Normal', 'Fraca', 'Outra']],
+            ],
+        ],
+        'sensibilidade' => [
+            'title' => 'Avaliacao da sensibilidade',
+            'legacy' => 'sensibilidade',
+            'fields' => [
+                'sensibilidade_tatil' => ['label' => 'Sensibilidade tatil', 'options' => ['Normal', 'Alterada', 'Outra']],
+                'sensibilidade_termica' => ['label' => 'Sensibilidade termica', 'options' => ['Normal', 'Alterada', 'Outra']],
+                'sensibilidade_dolorosa' => ['label' => 'Sensibilidade dolorosa', 'options' => ['Normal', 'Alterada', 'Outra']],
+            ],
+        ],
+        'equilibrio' => [
+            'title' => 'Avaliacao do equilibrio e marcha',
+            'legacy' => 'equilibrio_marcha',
+            'fields' => [
+                'equilibrio_estatico' => ['label' => 'Equilibrio estatico', 'options' => ['Normal', 'Alterado', 'Outra']],
+                'equilibrio_dinamico' => ['label' => 'Equilibrio dinamico', 'options' => ['Normal', 'Alterado', 'Outra']],
+                'marcha' => ['label' => 'Marcha', 'options' => ['Normal', 'Alterada', 'Outra']],
+            ],
+        ],
+        'avds' => [
+            'title' => 'Avaliacao das atividades de vida diaria (AVDs)',
+            'legacy' => 'avds',
+            'fields' => [
+                'avd_higiene' => ['label' => 'Higiene pessoal', 'options' => ['Independente', 'Dependente', 'Assistencia parcial', 'Outra']],
+                'avd_vestir' => ['label' => 'Vestir-se', 'options' => ['Independente', 'Dependente', 'Assistencia parcial', 'Outra']],
+                'avd_alimentacao' => ['label' => 'Alimentacao', 'options' => ['Independente', 'Dependente', 'Assistencia parcial', 'Outra']],
+                'avd_locomocao' => ['label' => 'Locomocao', 'options' => ['Independente', 'Dependente', 'Assistencia parcial', 'Outra']],
+                'avd_outras' => ['label' => 'Outras atividades', 'free_text' => true, 'placeholder' => 'Descreva outras atividades'],
+            ],
+        ],
+    ];
+}
+
+function patient_evaluation_detail_fields(): array
+{
+    $fields = [];
+
+    foreach (patient_evaluation_groups() as $group) {
+        foreach ($group['fields'] as $field => $meta) {
+            $fields[$field] = $meta;
+        }
+    }
+
+    return $fields;
+}
+
+function patient_evaluation_detail_field_names(): array
+{
+    return array_keys(patient_evaluation_detail_fields());
+}
+
+function patient_sheet_exam_value(string $field, array $meta): string
+{
+    if (!empty($meta['free_text'])) {
+        return patient_sheet_text($field);
+    }
+
+    $value = patient_sheet_text($field);
+
+    if ($value === '') {
+        return '';
+    }
+
+    $options = $meta['options'] ?? [];
+
+    if ($options !== [] && !in_array($value, $options, true)) {
+        return '';
+    }
+
+    if (in_array($value, ['Outra', 'Outro'], true)) {
+        $other = patient_sheet_text($field . '_outro');
+
+        return $other !== '' ? $value . ': ' . $other : $value;
+    }
+
+    return $value;
+}
+
+function patient_sheet_group_summary(array $group): string
+{
+    $lines = [];
+
+    foreach ($group['fields'] as $field => $meta) {
+        $value = patient_sheet_exam_value($field, $meta);
+
+        if ($value !== '') {
+            $lines[] = $meta['label'] . ': ' . $value;
+        }
+    }
+
+    return implode("\n", $lines);
+}
+
+function patient_print_value(?string $value): string
+{
+    $value = trim((string) $value);
+
+    return $value !== '' ? app_h($value) : '<span class="print-muted">Nao informado</span>';
+}
+
+function patient_sheet_has_other_option(array $meta): bool
+{
+    return array_intersect(($meta['options'] ?? []), ['Outra', 'Outro']) !== [];
+}
+
+function patient_sheet_other_option(array $meta): string
+{
+    foreach (($meta['options'] ?? []) as $option) {
+        if (in_array($option, ['Outra', 'Outro'], true)) {
+            return (string) $option;
+        }
+    }
+
+    return '';
+}
+
+function patient_sheet_saved_choice(?string $value, array $meta): string
+{
+    $value = trim((string) $value);
+
+    if ($value === '' || !empty($meta['free_text'])) {
+        return '';
+    }
+
+    foreach (($meta['options'] ?? []) as $option) {
+        $option = (string) $option;
+
+        if ($value === $option || (in_array($option, ['Outra', 'Outro'], true) && str_starts_with($value, $option . ':'))) {
+            return $option;
+        }
+    }
+
+    return patient_sheet_has_other_option($meta) ? patient_sheet_other_option($meta) : '';
+}
+
+function patient_sheet_saved_other_text(?string $value, array $meta): string
+{
+    $value = trim((string) $value);
+    $choice = patient_sheet_saved_choice($value, $meta);
+
+    if ($value === '' || !in_array($choice, ['Outra', 'Outro'], true)) {
+        return '';
+    }
+
+    $prefix = $choice . ':';
+
+    if (str_starts_with($value, $prefix)) {
+        return trim(substr($value, strlen($prefix)));
+    }
+
+    return $value !== $choice ? $value : '';
+}
+
 if (app_request_method() === 'POST') {
     $action = app_request_post('action', '') ?? '';
+
+    if ($action === 'delete_avaliacao') {
+        $evaluationId = app_post_int('avaliacao_id');
+        $ok = $evaluationId > 0 && app_stmt_execute(
+            $conn,
+            'DELETE FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ?',
+            'iii',
+            [$clinicId, $patientId, $evaluationId]
+        );
+
+        app_flash($ok ? 'success' : 'danger', $ok ? 'Ficha de avaliacao excluida.' : 'Nao foi possivel excluir a ficha de avaliacao.');
+        app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao']));
+    }
 
     if ($action === 'save_avaliacao') {
         $dataAvaliacao = patient_sheet_date('data_avaliacao');
@@ -70,56 +280,98 @@ if (app_request_method() === 'POST') {
         }
 
         $profissionalId = app_post_int('profissional_id') ?: null;
-        $ok = app_stmt_execute(
-            $conn,
-            'INSERT INTO paciente_fichas_avaliacao (
-                clinica_id,
-                paciente_id,
-                profissional_id,
-                data_avaliacao,
-                sexo,
-                queixa_principal,
-                historia_pregressa,
-                historia_atual,
-                lesoes_previas,
-                historia_cirurgica,
-                avaliacao_postura,
-                amplitude_movimento,
-                forca_muscular,
-                sensibilidade,
-                equilibrio_marcha,
-                avds,
-                objetivos,
-                condutas,
-                observacoes_finais,
-                assinatura_fisioterapeuta
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            'iiisssssssssssssssss',
-            [
-                $clinicId,
-                $patientId,
-                $profissionalId,
-                $dataAvaliacao,
-                patient_sheet_text('sexo'),
-                patient_sheet_text('queixa_principal'),
-                patient_sheet_text('historia_pregressa'),
-                patient_sheet_text('historia_atual'),
-                patient_sheet_text('lesoes_previas'),
-                patient_sheet_text('historia_cirurgica'),
-                patient_sheet_text('avaliacao_postura'),
-                patient_sheet_text('amplitude_movimento'),
-                patient_sheet_text('forca_muscular'),
-                patient_sheet_text('sensibilidade'),
-                patient_sheet_text('equilibrio_marcha'),
-                patient_sheet_text('avds'),
-                patient_sheet_text('objetivos'),
-                patient_sheet_text('condutas'),
-                patient_sheet_text('observacoes_finais'),
-                patient_sheet_text('assinatura_fisioterapeuta'),
-            ]
-        );
+        $evaluationId = app_post_int('avaliacao_id');
+        $detailFieldMetas = patient_evaluation_detail_fields();
+        $detailFields = array_keys($detailFieldMetas);
+        $legacySummaries = [];
 
-        app_flash($ok ? 'success' : 'danger', $ok ? 'Ficha de avaliacao salva.' : 'Nao foi possivel salvar a ficha de avaliacao.');
+        foreach (patient_evaluation_groups() as $group) {
+            $legacySummaries[$group['legacy']] = patient_sheet_group_summary($group);
+        }
+
+        $columns = array_merge(
+            [
+                'clinica_id',
+                'paciente_id',
+                'profissional_id',
+                'data_avaliacao',
+                'sexo',
+                'queixa_principal',
+                'historia_pregressa',
+                'historia_atual',
+                'lesoes_previas',
+                'historia_cirurgica',
+                'avaliacao_postura',
+                'amplitude_movimento',
+                'forca_muscular',
+                'sensibilidade',
+                'equilibrio_marcha',
+                'avds',
+                'objetivos',
+                'condutas',
+                'observacoes_finais',
+            ],
+            $detailFields
+        );
+        $values = [
+            $clinicId,
+            $patientId,
+            $profissionalId,
+            $dataAvaliacao,
+            patient_sheet_text('sexo'),
+            patient_sheet_text('queixa_principal'),
+            patient_sheet_text('historia_pregressa'),
+            patient_sheet_text('historia_atual'),
+            patient_sheet_text('lesoes_previas'),
+            patient_sheet_text('historia_cirurgica'),
+            $legacySummaries['avaliacao_postura'] ?? '',
+            $legacySummaries['amplitude_movimento'] ?? '',
+            $legacySummaries['forca_muscular'] ?? '',
+            $legacySummaries['sensibilidade'] ?? '',
+            $legacySummaries['equilibrio_marcha'] ?? '',
+            $legacySummaries['avds'] ?? '',
+            patient_sheet_text('objetivos'),
+            patient_sheet_text('condutas'),
+            patient_sheet_text('observacoes_finais'),
+        ];
+
+        foreach ($detailFields as $field) {
+            $values[] = patient_sheet_exam_value($field, $detailFieldMetas[$field] ?? []);
+        }
+
+        if ($evaluationId > 0) {
+            $existingEvaluation = app_stmt_one(
+                $conn,
+                'SELECT id FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ? LIMIT 1',
+                'iii',
+                [$clinicId, $patientId, $evaluationId]
+            );
+
+            if (!$existingEvaluation) {
+                app_flash('danger', 'Ficha de avaliacao nao encontrada para edicao.');
+                app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao']));
+            }
+
+            $updateColumns = array_slice($columns, 2);
+            $updateValues = array_slice($values, 2);
+            $setSql = implode(', ', array_map(static fn (string $column): string => $column . ' = ?', $updateColumns));
+            $ok = app_stmt_execute(
+                $conn,
+                'UPDATE paciente_fichas_avaliacao SET ' . $setSql . ' WHERE clinica_id = ? AND paciente_id = ? AND id = ?',
+                'i' . str_repeat('s', count($updateValues) - 1) . 'iii',
+                array_merge($updateValues, [$clinicId, $patientId, $evaluationId])
+            );
+        } else {
+            $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+            $ok = app_stmt_execute(
+                $conn,
+                'INSERT INTO paciente_fichas_avaliacao (' . implode(', ', $columns) . ') VALUES (' . $placeholders . ')',
+                'iii' . str_repeat('s', count($values) - 3),
+                $values
+            );
+        }
+
+        app_flash($ok ? 'success' : 'danger', $ok ? ($evaluationId > 0 ? 'Ficha de avaliacao atualizada.' : 'Ficha de avaliacao salva.') : 'Nao foi possivel salvar a ficha de avaliacao.');
         app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao']));
     }
 
@@ -148,10 +400,9 @@ if (app_request_method() === 'POST') {
                 atendimento_id,
                 profissional_id,
                 data_evolucao,
-                condutas_observacoes,
-                assinatura_fisioterapeuta
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            'iiiisss',
+                condutas_observacoes
+            ) VALUES (?, ?, ?, ?, ?, ?)',
+            'iiiiss',
             [
                 $clinicId,
                 $patientId,
@@ -159,7 +410,6 @@ if (app_request_method() === 'POST') {
                 $profissionalId,
                 $dataEvolucao,
                 $condutas,
-                patient_sheet_text('assinatura_fisioterapeuta'),
             ]
         );
 
@@ -207,6 +457,42 @@ $evaluations = app_stmt_all(
     'ii',
     [$clinicId, $patientId]
 );
+
+$editEvaluationId = app_query_int('avaliacao_id');
+$editingEvaluation = null;
+
+if ($editEvaluationId > 0) {
+    foreach ($evaluations as $evaluation) {
+        if ((int) ($evaluation['id'] ?? 0) === $editEvaluationId) {
+            $editingEvaluation = $evaluation;
+            break;
+        }
+    }
+
+    if ($editingEvaluation === null) {
+        app_flash('danger', 'Ficha de avaliacao nao encontrada.');
+        app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao']));
+    }
+}
+
+$evaluationFormValues = [
+    'id' => (int) ($editingEvaluation['id'] ?? 0),
+    'data_avaliacao' => !empty($editingEvaluation['data_avaliacao']) ? app_date_br((string) $editingEvaluation['data_avaliacao']) : date('d/m/Y'),
+    'profissional_id' => (int) ($editingEvaluation['profissional_id'] ?? ($currentProfessionalId ?? 0)),
+    'sexo' => (string) ($editingEvaluation['sexo'] ?? ''),
+    'queixa_principal' => (string) ($editingEvaluation['queixa_principal'] ?? ''),
+    'historia_pregressa' => (string) ($editingEvaluation['historia_pregressa'] ?? ''),
+    'historia_atual' => (string) ($editingEvaluation['historia_atual'] ?? ''),
+    'lesoes_previas' => (string) ($editingEvaluation['lesoes_previas'] ?? ''),
+    'historia_cirurgica' => (string) ($editingEvaluation['historia_cirurgica'] ?? ''),
+    'objetivos' => (string) ($editingEvaluation['objetivos'] ?? ''),
+    'condutas' => (string) ($editingEvaluation['condutas'] ?? ''),
+    'observacoes_finais' => (string) ($editingEvaluation['observacoes_finais'] ?? ''),
+];
+
+foreach (patient_evaluation_detail_field_names() as $field) {
+    $evaluationFormValues[$field] = (string) ($editingEvaluation[$field] ?? '');
+}
 
 $evolutions = app_stmt_all(
     $conn,
@@ -339,14 +625,102 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
 }
 
 .sheet-block-title {
-    display: inline-flex;
-    width: fit-content;
-    margin: 0 0 0.15rem;
-    padding: 0 0 0.14rem;
-    border-bottom: 2px solid #0f5c4a;
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border-bottom: 0;
     color: #0f5c4a;
     font-size: 0.68rem;
     font-weight: 800;
+    text-align: left;
+}
+
+.sheet-field-grid {
+    row-gap: 0.55rem;
+}
+
+.sheet-choice-field {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.sheet-choice-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.sheet-choice-options .btn {
+    min-height: 32px;
+    border-color: #cddfe5;
+    border-radius: 6px;
+    color: #315a68;
+    font-size: 0.72rem;
+    font-weight: 800;
+    background: #ffffff;
+}
+
+.sheet-choice-options .btn-check:checked + .btn {
+    border-color: #0f5c4a;
+    color: #ffffff;
+    background: #0f5c4a;
+    box-shadow: 0 7px 14px rgba(15, 92, 74, 0.18);
+}
+
+.sheet-choice-other {
+    min-height: 34px !important;
+}
+
+.sheet-choice-other[hidden] {
+    display: none !important;
+}
+
+.sheet-print-template {
+    display: none;
+}
+
+.print-sheet {
+    color: #111827;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+}
+
+.print-sheet h1 {
+    font-size: 18px;
+    margin: 0 0 12px;
+    text-align: center;
+}
+
+.print-sheet h2 {
+    border-bottom: 1px solid #111827;
+    font-size: 13px;
+    margin: 14px 0 8px;
+    padding-bottom: 3px;
+}
+
+.print-sheet .print-grid {
+    display: grid;
+    gap: 6px 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.print-sheet .print-field {
+    border-bottom: 1px solid #d1d5db;
+    min-height: 22px;
+    padding: 3px 0;
+}
+
+.print-sheet .print-field.full {
+    grid-column: 1 / -1;
+}
+
+.print-sheet .print-label {
+    font-weight: 700;
+}
+
+.print-muted {
+    color: #6b7280;
 }
 
 .sheet-list {
@@ -364,6 +738,48 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
 
 .sheet-list-item small {
     color: #68828f;
+}
+
+.sheet-list-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+}
+
+.sheet-list-actions form {
+    display: inline-flex;
+}
+
+.sheet-list-details {
+    border-top: 1px solid rgba(18, 73, 88, 0.08);
+    color: #315a68;
+    font-size: 0.78rem;
+    padding-top: 0.45rem;
+}
+
+.sheet-list-details summary {
+    color: #0f5c4a;
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.sheet-detail-grid {
+    display: grid;
+    gap: 0.35rem 0.7rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sheet-detail-grid .full {
+    grid-column: 1 / -1;
+}
+
+.sheet-detail-section {
+    margin-top: 0.55rem;
+    color: #0f5c4a;
+    font-size: 0.68rem;
+    font-weight: 900;
+    text-transform: uppercase;
 }
 
 .sheet-side-panel {
@@ -426,22 +842,31 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                             <form method="POST" class="row g-2 sheet-form">
                                 <input type="hidden" name="action" value="save_avaliacao">
                                 <input type="hidden" name="paciente_id" value="<?= (int) $patientId ?>">
+                                <input type="hidden" name="avaliacao_id" value="<?= (int) $evaluationFormValues['id'] ?>">
+                                <?php if ((int) $evaluationFormValues['id'] > 0): ?>
+                                    <div class="col-12">
+                                        <div class="alert alert-info d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 py-2 mb-1">
+                                            <span>Editando avaliacao de <?= app_h($evaluationFormValues['data_avaliacao']) ?>.</span>
+                                            <a class="btn btn-sm btn-outline-primary" href="paciente_fichas.php?<?= app_h(app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao'])) ?>">Nova avaliacao</a>
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted">Data da avaliacao</label>
-                                    <input type="text" name="data_avaliacao" class="form-control" data-mask-date value="<?= app_h(date('d/m/Y')) ?>" title="Data da avaliacao no formato dd/mm/aaaa.">
+                                    <input type="text" name="data_avaliacao" class="form-control" data-mask-date value="<?= app_h((string) $evaluationFormValues['data_avaliacao']) ?>" title="Data da avaliacao no formato dd/mm/aaaa.">
                                 </div>
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted">Profissional</label>
                                     <select name="profissional_id" class="form-select" title="Fisioterapeuta responsavel pela avaliacao.">
                                         <option value="">Nao informado</option>
                                         <?php foreach ($professionals as $professional): ?>
-                                            <option value="<?= (int) $professional['id'] ?>" <?= $currentProfessionalId !== null && (int) $professional['id'] === $currentProfessionalId ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
+                                            <option value="<?= (int) $professional['id'] ?>" <?= (int) $professional['id'] === (int) $evaluationFormValues['profissional_id'] ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted">Sexo</label>
-                                    <input type="text" name="sexo" class="form-control" title="Sexo informado na ficha de avaliacao.">
+                                    <input type="text" name="sexo" class="form-control" value="<?= app_h((string) $evaluationFormValues['sexo']) ?>" title="Sexo informado na ficha de avaliacao.">
                                 </div>
 
                                 <ul class="nav nav-pills sheet-inner-tabs" id="evaluationInnerTabs" role="tablist">
@@ -461,54 +886,59 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                                 <div class="col-12 sheet-block-title">Historico</div>
                                 <div class="col-12">
                                     <label class="form-label small text-muted">Queixa principal</label>
-                                    <textarea name="queixa_principal" class="form-control" title="Motivo principal relatado pelo paciente."></textarea>
+                                    <textarea name="queixa_principal" class="form-control" title="Motivo principal relatado pelo paciente."><?= app_h((string) $evaluationFormValues['queixa_principal']) ?></textarea>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Historia pregressa</label>
-                                    <textarea name="historia_pregressa" class="form-control" title="Historico anterior relevante para o tratamento."></textarea>
+                                    <textarea name="historia_pregressa" class="form-control" title="Historico anterior relevante para o tratamento."><?= app_h((string) $evaluationFormValues['historia_pregressa']) ?></textarea>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Historia atual</label>
-                                    <textarea name="historia_atual" class="form-control" title="Evolucao atual da queixa e sintomas."></textarea>
+                                    <textarea name="historia_atual" class="form-control" title="Evolucao atual da queixa e sintomas."><?= app_h((string) $evaluationFormValues['historia_atual']) ?></textarea>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Lesoes previas</label>
-                                    <textarea name="lesoes_previas" class="form-control" title="Lesoes anteriores relatadas pelo paciente."></textarea>
+                                    <textarea name="lesoes_previas" class="form-control" title="Lesoes anteriores relatadas pelo paciente."><?= app_h((string) $evaluationFormValues['lesoes_previas']) ?></textarea>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Historia cirurgica</label>
-                                    <textarea name="historia_cirurgica" class="form-control" title="Cirurgias anteriores relevantes."></textarea>
+                                    <textarea name="historia_cirurgica" class="form-control" title="Cirurgias anteriores relevantes."><?= app_h((string) $evaluationFormValues['historia_cirurgica']) ?></textarea>
                                 </div>
 
                                         </div>
                                     </div>
                                     <div class="tab-pane fade sheet-pane" id="evalExamPane" role="tabpanel" aria-labelledby="evalExamTab">
-                                        <div class="row g-2">
+                                        <div class="row g-2 sheet-field-grid">
                                 <div class="col-12 sheet-block-title">Exame fisico</div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">Avaliacao da postura</label>
-                                    <textarea name="avaliacao_postura" class="form-control" title="Postura, alinhamentos e observacoes gerais."></textarea>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">Amplitude de movimento</label>
-                                    <textarea name="amplitude_movimento" class="form-control" title="Amplitude de movimento por regiao avaliada."></textarea>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">Forca muscular</label>
-                                    <textarea name="forca_muscular" class="form-control" title="Forca muscular por grupo avaliado."></textarea>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">Sensibilidade</label>
-                                    <textarea name="sensibilidade" class="form-control" title="Sensibilidade tatil, termica e dolorosa."></textarea>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">Equilibrio e marcha</label>
-                                    <textarea name="equilibrio_marcha" class="form-control" title="Equilibrio estatico, dinamico e marcha."></textarea>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label small text-muted">AVDs</label>
-                                    <textarea name="avds" class="form-control" title="Atividades de vida diaria e grau de independencia."></textarea>
-                                </div>
+                                <?php foreach (patient_evaluation_groups() as $group): ?>
+                                    <div class="col-12 sheet-block-title mt-2"><?= app_h($group['title']) ?></div>
+                                    <?php foreach ($group['fields'] as $field => $meta): ?>
+                                        <div class="col-md-6">
+                                            <label class="form-label small text-muted"><?= app_h($meta['label']) ?></label>
+                                            <?php if (!empty($meta['free_text'])): ?>
+                                                <input type="text" name="<?= app_h($field) ?>" class="form-control" value="<?= app_h((string) ($evaluationFormValues[$field] ?? '')) ?>" placeholder="<?= app_h((string) ($meta['placeholder'] ?? '')) ?>">
+                                            <?php else: ?>
+                                                <?php
+                                                $savedChoice = patient_sheet_saved_choice((string) ($evaluationFormValues[$field] ?? ''), $meta);
+                                                $savedOther = patient_sheet_saved_other_text((string) ($evaluationFormValues[$field] ?? ''), $meta);
+                                                $showOther = in_array($savedChoice, ['Outra', 'Outro'], true);
+                                                ?>
+                                                <div class="sheet-choice-field">
+                                                    <div class="sheet-choice-options" role="group" aria-label="<?= app_h($meta['label']) ?>">
+                                                        <?php foreach (($meta['options'] ?? []) as $optionIndex => $option): ?>
+                                                            <?php $choiceId = 'exam-' . $field . '-' . (int) $optionIndex; ?>
+                                                            <input type="radio" class="btn-check" name="<?= app_h($field) ?>" id="<?= app_h($choiceId) ?>" value="<?= app_h((string) $option) ?>" <?= $savedChoice === (string) $option ? 'checked' : '' ?>>
+                                                            <label class="btn btn-outline-secondary btn-sm" for="<?= app_h($choiceId) ?>"><?= app_h((string) $option) ?></label>
+                                                        <?php endforeach; ?>
+                                                    </div>
+                                                    <?php if (array_intersect(($meta['options'] ?? []), ['Outra', 'Outro']) !== []): ?>
+                                                        <input type="text" name="<?= app_h($field . '_outro') ?>" class="form-control sheet-choice-other" data-other-for="<?= app_h($field) ?>" value="<?= app_h($savedOther) ?>" placeholder="Descreva se marcar Outra/Outro" <?= $showOther ? '' : 'hidden disabled' ?>>
+                                                    <?php endif; ?>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                <?php endforeach; ?>
 
                                         </div>
                                     </div>
@@ -517,22 +947,18 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                                 <div class="col-12 sheet-block-title">Plano terapeutico</div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Objetivos</label>
-                                    <textarea name="objetivos" class="form-control" title="Objetivos terapeuticos definidos para o paciente."></textarea>
+                                    <textarea name="objetivos" class="form-control" title="Objetivos terapeuticos definidos para o paciente."><?= app_h((string) $evaluationFormValues['objetivos']) ?></textarea>
                                 </div>
                                 <div class="col-md-6">
                                     <label class="form-label small text-muted">Condutas</label>
-                                    <textarea name="condutas" class="form-control" title="Condutas planejadas para o tratamento."></textarea>
+                                    <textarea name="condutas" class="form-control" title="Condutas planejadas para o tratamento."><?= app_h((string) $evaluationFormValues['condutas']) ?></textarea>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label small text-muted">Observacoes finais</label>
-                                    <textarea name="observacoes_finais" class="form-control" title="Observacoes e consideracoes finais da avaliacao."></textarea>
+                                    <textarea name="observacoes_finais" class="form-control" title="Observacoes e consideracoes finais da avaliacao."><?= app_h((string) $evaluationFormValues['observacoes_finais']) ?></textarea>
                                 </div>
-                                <div class="col-md-8">
-                                    <label class="form-label small text-muted">Assinatura do fisioterapeuta</label>
-                                    <input type="text" name="assinatura_fisioterapeuta" class="form-control" title="Nome do fisioterapeuta responsavel pela assinatura.">
-                                </div>
-                                <div class="col-md-4 d-flex align-items-end justify-content-end">
-                                    <button class="btn btn-primary px-4">Salvar avaliacao</button>
+                                <div class="col-12 d-flex align-items-end justify-content-end">
+                                    <button class="btn btn-primary px-4"><?= (int) $evaluationFormValues['id'] > 0 ? 'Atualizar avaliacao' : 'Salvar avaliacao' ?></button>
                                 </div>
                                         </div>
                                     </div>
@@ -544,10 +970,85 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                             <h6 class="mb-2">Avaliacoes salvas</h6>
                             <div class="sheet-list">
                                 <?php foreach ($evaluations as $item): ?>
+                                    <?php $printId = 'print-avaliacao-' . (int) $item['id']; ?>
                                     <div class="sheet-list-item">
-                                        <strong><?= app_h(app_date_br((string) $item['data_avaliacao'])) ?></strong>
-                                        <small class="d-block"><?= app_h((string) ($item['profissional_nome'] ?: 'Profissional nao informado')) ?></small>
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <div>
+                                                <strong><?= app_h(app_date_br((string) $item['data_avaliacao'])) ?></strong>
+                                                <small class="d-block"><?= app_h((string) ($item['profissional_nome'] ?: 'Profissional nao informado')) ?></small>
+                                            </div>
+                                            <div class="sheet-list-actions">
+                                                <a class="btn btn-sm btn-outline-primary" href="paciente_fichas.php?<?= app_h(app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao', 'avaliacao_id' => (int) $item['id']])) ?>">Editar</a>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" data-print-sheet="#<?= app_h($printId) ?>">Imprimir</button>
+                                                <form method="POST" onsubmit="return confirm('Excluir esta avaliacao?')">
+                                                    <input type="hidden" name="action" value="delete_avaliacao">
+                                                    <input type="hidden" name="paciente_id" value="<?= (int) $patientId ?>">
+                                                    <input type="hidden" name="avaliacao_id" value="<?= (int) $item['id'] ?>">
+                                                    <button class="btn btn-sm btn-outline-danger" type="submit">Excluir</button>
+                                                </form>
+                                            </div>
+                                        </div>
                                         <div class="small mt-1"><?= app_h(patient_sheet_summary((string) ($item['queixa_principal'] ?: $item['observacoes_finais'] ?: 'Sem resumo'), 170)) ?></div>
+                                        <details class="sheet-list-details mt-2">
+                                            <summary>Ver detalhes</summary>
+                                            <div class="sheet-detail-grid mt-2">
+                                                <div><strong>Queixa:</strong> <?= patient_print_value((string) ($item['queixa_principal'] ?? '')) ?></div>
+                                                <div><strong>Historia atual:</strong> <?= patient_print_value((string) ($item['historia_atual'] ?? '')) ?></div>
+                                                <div><strong>Objetivos:</strong> <?= patient_print_value((string) ($item['objetivos'] ?? '')) ?></div>
+                                                <div><strong>Condutas:</strong> <?= patient_print_value((string) ($item['condutas'] ?? '')) ?></div>
+                                                <div class="full"><strong>Observacoes finais:</strong> <?= patient_print_value((string) ($item['observacoes_finais'] ?? '')) ?></div>
+                                            </div>
+                                            <?php foreach (patient_evaluation_groups() as $group): ?>
+                                                <div class="sheet-detail-section"><?= app_h($group['title']) ?></div>
+                                                <div class="sheet-detail-grid">
+                                                    <?php foreach ($group['fields'] as $field => $meta): ?>
+                                                        <div><strong><?= app_h($meta['label']) ?>:</strong> <?= patient_print_value((string) ($item[$field] ?? '')) ?></div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            <?php endforeach; ?>
+                                        </details>
+                                        <div class="sheet-print-template" id="<?= app_h($printId) ?>">
+                                            <article class="print-sheet">
+                                                <h1>FICHA DE AVALIACAO FISIOTERAPEUTICA DETALHADA</h1>
+                                                <h2>Dados do paciente</h2>
+                                                <div class="print-grid">
+                                                    <div class="print-field"><span class="print-label">Nome:</span> <?= patient_print_value((string) $patient['nome']) ?></div>
+                                                    <div class="print-field"><span class="print-label">Data de nascimento:</span> <?= patient_print_value(!empty($patient['data_nascimento']) ? app_date_br((string) $patient['data_nascimento']) : '') ?></div>
+                                                    <div class="print-field"><span class="print-label">Sexo:</span> <?= patient_print_value((string) ($item['sexo'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Data da avaliacao:</span> <?= patient_print_value(app_date_br((string) $item['data_avaliacao'])) ?></div>
+                                                    <div class="print-field"><span class="print-label">CPF/CNPJ:</span> <?= patient_print_value((string) ($patient['cpf'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Profissional:</span> <?= patient_print_value((string) ($item['profissional_nome'] ?? '')) ?></div>
+                                                </div>
+                                                <h2>Historico</h2>
+                                                <div class="print-grid">
+                                                    <div class="print-field full"><span class="print-label">Queixa principal:</span> <?= patient_print_value((string) ($item['queixa_principal'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Historia pregressa:</span> <?= patient_print_value((string) ($item['historia_pregressa'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Historia atual:</span> <?= patient_print_value((string) ($item['historia_atual'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Lesoes previas:</span> <?= patient_print_value((string) ($item['lesoes_previas'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Historia cirurgica:</span> <?= patient_print_value((string) ($item['historia_cirurgica'] ?? '')) ?></div>
+                                                </div>
+                                                <h2>Exame fisico</h2>
+                                                <?php foreach (patient_evaluation_groups() as $group): ?>
+                                                    <h2><?= app_h($group['title']) ?></h2>
+                                                    <div class="print-grid">
+                                                        <?php $hasGroupDetail = false; ?>
+                                                        <?php foreach ($group['fields'] as $field => $meta): ?>
+                                                            <?php $hasGroupDetail = $hasGroupDetail || trim((string) ($item[$field] ?? '')) !== ''; ?>
+                                                            <div class="print-field"><span class="print-label"><?= app_h($meta['label']) ?>:</span> <?= patient_print_value((string) ($item[$field] ?? '')) ?></div>
+                                                        <?php endforeach; ?>
+                                                        <?php if (!$hasGroupDetail && trim((string) ($item[$group['legacy']] ?? '')) !== ''): ?>
+                                                            <div class="print-field full"><span class="print-label">Resumo anterior:</span> <?= nl2br(app_h((string) $item[$group['legacy']])) ?></div>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                                <h2>Objetivos, condutas e observacoes</h2>
+                                                <div class="print-grid">
+                                                    <div class="print-field"><span class="print-label">Objetivos:</span> <?= patient_print_value((string) ($item['objetivos'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Condutas:</span> <?= patient_print_value((string) ($item['condutas'] ?? '')) ?></div>
+                                                    <div class="print-field full"><span class="print-label">Observacoes finais:</span> <?= patient_print_value((string) ($item['observacoes_finais'] ?? '')) ?></div>
+                                                </div>
+                                            </article>
+                                        </div>
                                     </div>
                                 <?php endforeach; ?>
                                 <?php if ($evaluations === []): ?>
@@ -593,11 +1094,7 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                                     <label class="form-label small text-muted">Condutas realizadas e observacoes</label>
                                     <textarea name="condutas_observacoes" class="form-control" rows="6" required title="Registre as condutas realizadas, evolucao do paciente e observacoes do dia."></textarea>
                                 </div>
-                                <div class="col-md-8">
-                                    <label class="form-label small text-muted">Assinatura do fisioterapeuta</label>
-                                    <input type="text" name="assinatura_fisioterapeuta" class="form-control" title="Nome do fisioterapeuta responsavel pela assinatura.">
-                                </div>
-                                <div class="col-md-4 d-flex align-items-end justify-content-end">
+                                <div class="col-12 d-flex align-items-end justify-content-end">
                                     <button class="btn btn-primary px-4">Salvar evolucao</button>
                                 </div>
                             </form>
@@ -607,10 +1104,32 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                             <h6 class="mb-2">Evolucoes salvas</h6>
                             <div class="sheet-list">
                                 <?php foreach ($evolutions as $item): ?>
+                                    <?php $printId = 'print-evolucao-' . (int) $item['id']; ?>
                                     <div class="sheet-list-item">
-                                        <strong><?= app_h(app_date_br((string) $item['data_evolucao'])) ?></strong>
-                                        <small class="d-block"><?= app_h((string) ($item['profissional_nome'] ?: 'Profissional nao informado')) ?></small>
+                                        <div class="d-flex justify-content-between align-items-start gap-2">
+                                            <div>
+                                                <strong><?= app_h(app_date_br((string) $item['data_evolucao'])) ?></strong>
+                                                <small class="d-block"><?= app_h((string) ($item['profissional_nome'] ?: 'Profissional nao informado')) ?></small>
+                                            </div>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" data-print-sheet="#<?= app_h($printId) ?>">Imprimir</button>
+                                        </div>
                                         <div class="small mt-1"><?= app_h(patient_sheet_summary((string) ($item['condutas_observacoes'] ?: 'Sem resumo'), 220)) ?></div>
+                                        <div class="sheet-print-template" id="<?= app_h($printId) ?>">
+                                            <article class="print-sheet">
+                                                <h1>FICHA DE EVOLUCAO DIARIA DE ATENDIMENTO FISIOTERAPEUTICO</h1>
+                                                <h2>Dados do paciente</h2>
+                                                <div class="print-grid">
+                                                    <div class="print-field"><span class="print-label">Nome do paciente:</span> <?= patient_print_value((string) $patient['nome']) ?></div>
+                                                    <div class="print-field"><span class="print-label">Data:</span> <?= patient_print_value(app_date_br((string) $item['data_evolucao'])) ?></div>
+                                                    <div class="print-field"><span class="print-label">Profissional:</span> <?= patient_print_value((string) ($item['profissional_nome'] ?? '')) ?></div>
+                                                    <div class="print-field"><span class="print-label">Atendimento vinculado:</span> <?= patient_print_value(!empty($item['atendimento_id']) ? '#' . (string) $item['atendimento_id'] : '') ?></div>
+                                                </div>
+                                                <h2>Condutas realizadas e observacoes</h2>
+                                                <div class="print-grid">
+                                                    <div class="print-field full"><?= nl2br(app_h((string) ($item['condutas_observacoes'] ?? ''))) ?></div>
+                                                </div>
+                                            </article>
+                                        </div>
                                     </div>
                                 <?php endforeach; ?>
                                 <?php if ($evolutions === []): ?>
@@ -637,6 +1156,67 @@ document.querySelectorAll('[data-mask-date]').forEach((input) => {
         input.value = digits
             .replace(/^(\d{2})(\d)/, '$1/$2')
             .replace(/^(\d{2})\/(\d{2})(\d)/, '$1/$2/$3');
+    });
+});
+
+document.querySelectorAll('[data-other-for]').forEach((input) => {
+    const fieldName = input.dataset.otherFor || '';
+    const radios = Array.from(document.getElementsByName(fieldName))
+        .filter((field) => field instanceof HTMLInputElement && field.type === 'radio');
+
+    function syncOtherInput() {
+        const selected = radios.find((radio) => radio.checked);
+        const enablesOther = selected && ['Outra', 'Outro'].includes(selected.value);
+        input.disabled = !enablesOther;
+        input.hidden = !enablesOther;
+
+        if (!enablesOther) {
+            input.value = '';
+        }
+    }
+
+    radios.forEach((radio) => radio.addEventListener('change', syncOtherInput));
+    syncOtherInput();
+});
+
+document.querySelectorAll('[data-print-sheet]').forEach((button) => {
+    button.addEventListener('click', () => {
+        const template = document.querySelector(button.dataset.printSheet || '');
+
+        if (!template) {
+            return;
+        }
+
+        const printWindow = window.open('', '_blank', 'width=900,height=700');
+
+        if (!printWindow) {
+            window.print();
+            return;
+        }
+
+        printWindow.document.write(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Imprimir ficha</title>
+<style>
+body { margin: 24px; color: #111827; font-family: Arial, sans-serif; }
+.print-sheet { font-size: 12px; }
+.print-sheet h1 { font-size: 18px; margin: 0 0 12px; text-align: center; }
+.print-sheet h2 { border-bottom: 1px solid #111827; font-size: 13px; margin: 14px 0 8px; padding-bottom: 3px; }
+.print-grid { display: grid; gap: 6px 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.print-field { border-bottom: 1px solid #d1d5db; min-height: 22px; padding: 3px 0; white-space: pre-wrap; }
+.print-field.full { grid-column: 1 / -1; }
+.print-label { font-weight: 700; }
+.print-muted { color: #6b7280; }
+@media print { body { margin: 12mm; } }
+</style>
+</head>
+<body>${template.innerHTML}</body>
+</html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
     });
 });
 </script>

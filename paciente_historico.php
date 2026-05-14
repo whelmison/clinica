@@ -131,7 +131,7 @@ $fichaCounts = app_stmt_one(
                         <div class="history-meta"><?= app_h((string) ($patient['telefone'] ?? '-')) ?></div>
                     </div>
                     <div class="mb-2">
-                        <strong>CPF</strong>
+                        <strong>CPF/CNPJ</strong>
                         <div class="history-meta"><?= app_h((string) ($patient['cpf'] ?? '-')) ?></div>
                     </div>
                     <div class="mb-2">

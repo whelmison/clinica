@@ -70,6 +70,12 @@ final class ProfessionalService
     public function saveUser(?int $userId, array $input): array
     {
         try {
+            $existingUser = $userId !== null ? $this->repository->findUser($userId) : null;
+
+            if ($existingUser && (int) ($existingUser['usuario_padrao'] ?? 0) === 1) {
+                return ['ok' => false, 'message' => 'Altere o usuario padrao pelo painel do desenvolvedor para sincronizar todas as clinicas.'];
+            }
+
             $data = $this->normalizeUser($input, $userId);
 
             if ($userId === null) {
@@ -98,6 +104,10 @@ final class ProfessionalService
 
         if (!$user) {
             return ['ok' => false, 'message' => 'Usuario nao encontrado.'];
+        }
+
+        if ((int) ($user['usuario_padrao'] ?? 0) === 1) {
+            return ['ok' => false, 'message' => 'Nao e permitido excluir o usuario padrao das clinicas.'];
         }
 
         $this->repository->deleteUser($userId);

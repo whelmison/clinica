@@ -24,17 +24,24 @@ $form = [
 if (app_request_method() === 'POST') {
     if ($form['nome_fantasia'] === '') {
         app_flash('danger', 'Informe o nome da clinica.');
+    } elseif ($form['cnpj'] !== '' && !app_cnpj_valid($form['cnpj'])) {
+        app_flash('danger', 'Informe um CNPJ valido.');
+    } elseif ($form['cnpj'] !== '' && app_clinic_cnpj_conflict($conn, $form['cnpj'], $clinicId) !== null) {
+        app_flash('danger', 'Ja existe uma clinica com este CNPJ.');
     } else {
+        $cnpj = $form['cnpj'] !== '' ? app_format_cnpj($form['cnpj']) : null;
+        $cnpjDigits = $form['cnpj'] !== '' ? app_only_digits($form['cnpj']) : null;
         $ok = app_stmt_execute(
             $conn,
             'UPDATE clinicas
-             SET nome_fantasia = ?, razao_social = ?, cnpj = ?, telefone = ?, whatsapp = ?, email = ?, endereco = ?, cidade = ?, estado = ?
+             SET nome_fantasia = ?, razao_social = ?, cnpj = ?, cnpj_digits = ?, telefone = ?, whatsapp = ?, email = ?, endereco = ?, cidade = ?, estado = ?
              WHERE id = ?',
-            'sssssssssi',
+            'ssssssssssi',
             [
                 $form['nome_fantasia'],
                 $form['razao_social'] ?: null,
-                $form['cnpj'] ?: null,
+                $cnpj,
+                $cnpjDigits,
                 $form['telefone'] ?: null,
                 $form['whatsapp'] ?: null,
                 $form['email'] ?: null,

@@ -391,28 +391,42 @@ body {
 }
 
 .patients-form-section {
-    grid-column: 1 / -1;
-    display: inline-flex;
-    width: fit-content;
-    margin: 0 0 0.1rem;
-    padding: 0 0 0.14rem;
-    border-bottom: 2px solid #0f5c4a;
+    flex: 0 0 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border-bottom: 0;
     color: #0f5c4a;
     font-size: 0.68rem;
     font-weight: 800;
     letter-spacing: 0.02em;
+    text-align: left;
 }
 
 .patients-form .emergency-box {
-    padding: 0.65rem;
-    border: 1px solid rgba(15, 92, 74, 0.24);
-    border-radius: 8px;
-    background: #eef7f3;
+    height: 100%;
 }
 
 .patients-form .emergency-box label {
     color: #0f5c4a;
     font-weight: 800;
+}
+
+.patient-field-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 0.45rem;
+    margin-bottom: 0.32rem;
+    flex-wrap: wrap;
+}
+
+.patient-field-heading .form-label {
+    margin-bottom: 0;
+}
+
+.patient-field-heading .patients-hint {
+    line-height: 1.1;
 }
 
 .patients-hint {
@@ -554,7 +568,7 @@ body {
 
 <tr>
 <th>Paciente</th>
-<th>Documento</th>
+<th>CPF/CNPJ</th>
 <th>Contato</th>
 <th>Ultimo plano</th>
 <th>Preferencia</th>
@@ -726,25 +740,27 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os paci
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-muted">Telefone</label>
-                        <input type="text" name="telefone" class="form-control" value="<?= app_h((string) $patientFormValues['telefone']) ?>" title="Telefone para contato da secretaria e confirmação de agendamentos.">
+                        <input type="text" name="telefone" class="form-control" data-mask-phone value="<?= app_h((string) $patientFormValues['telefone']) ?>" placeholder="(00) 00000-0000" maxlength="15" title="Telefone para contato da secretaria e confirmação de agendamentos.">
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small text-muted">CPF</label>
-                        <input type="text" name="cpf" class="form-control" data-mask-cpf value="<?= app_h((string) $patientFormValues['cpf']) ?>" placeholder="000.000.000-00" maxlength="14" title="CPF do paciente. Se preenchido, o sistema confere se o CPF e valido.">
-                        <div class="invalid-feedback">CPF invalido.</div>
+                        <label class="form-label small text-muted">CPF/CNPJ</label>
+                        <input type="text" name="cpf" class="form-control" data-mask-cpf-cnpj value="<?= app_h((string) $patientFormValues['cpf']) ?>" placeholder="CPF ou CNPJ" maxlength="18" title="CPF ou CNPJ do paciente. Se preenchido, o sistema confere se o documento e valido.">
+                        <div class="invalid-feedback">CPF ou CNPJ invalido.</div>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label small text-muted">Data de nascimento</label>
                         <input type="text" name="data_nascimento" class="form-control" data-mask-date value="<?= app_h((string) $patientFormValues['data_nascimento']) ?>" placeholder="dd/mm/aaaa" maxlength="10" title="Data de nascimento no formato brasileiro: dia/mes/ano.">
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-6">
                         <div class="emergency-box">
-                            <label class="form-label small">Telefone de emergencia</label>
-                            <input type="text" name="telefone_emergencia" class="form-control" value="<?= app_h((string) $patientFormValues['telefone_emergencia']) ?>" title="Usado quando o cliente passa mal ou precisa de contato urgente.">
-                            <div class="small text-danger mt-1">Usado quando o cliente passa mal.</div>
+                            <div class="patient-field-heading">
+                                <label class="form-label small text-muted">Telefone de emergencia</label>
+                                <span class="patients-hint">Usado quando o cliente passa mal.</span>
+                            </div>
+                            <input type="text" name="telefone_emergencia" class="form-control" data-mask-phone value="<?= app_h((string) $patientFormValues['telefone_emergencia']) ?>" placeholder="(00) 00000-0000" maxlength="15" title="Usado quando o cliente passa mal ou precisa de contato urgente.">
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-6">
                         <label class="form-label small text-muted">Quem indicou</label>
                         <input type="text" name="indicado_por" class="form-control" value="<?= app_h((string) $patientFormValues['indicado_por']) ?>" title="Nome da pessoa, profissional, empresa ou origem que indicou a clinica para o paciente.">
                     </div>
@@ -934,12 +950,35 @@ function onlyDigits(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
-function maskCpf(value) {
-    const digits = onlyDigits(value).slice(0, 11);
+function maskCpfCnpj(value) {
+    const digits = onlyDigits(value).slice(0, 14);
+
+    if (digits.length > 11) {
+        return digits
+            .replace(/^(\d{2})(\d)/, '$1.$2')
+            .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+            .replace(/^(\d{2})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3/$4')
+            .replace(/^(\d{2})\.(\d{3})\.(\d{3})\/(\d{4})(\d)/, '$1.$2.$3/$4-$5');
+    }
+
     return digits
         .replace(/^(\d{3})(\d)/, '$1.$2')
         .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
         .replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3-$4');
+}
+
+function maskPhoneBr(value) {
+    const digits = onlyDigits(value).replace(/^55(?=\d{10,11}$)/, '').slice(0, 11);
+
+    if (digits.length > 10) {
+        return digits
+            .replace(/^(\d{2})(\d)/, '($1) $2')
+            .replace(/^(\(\d{2}\)\s)(\d{5})(\d)/, '$1$2-$3');
+    }
+
+    return digits
+        .replace(/^(\d{2})(\d)/, '($1) $2')
+        .replace(/^(\(\d{2}\)\s)(\d{4})(\d)/, '$1$2-$3');
 }
 
 function maskDateBr(value) {
@@ -979,15 +1018,57 @@ function cpfIsValid(value) {
     return true;
 }
 
-document.querySelectorAll('[data-mask-cpf]').forEach((input) => {
+function cnpjIsValid(value) {
+    const digits = onlyDigits(value);
+
+    if (digits.length !== 14 || /^(\d)\1{13}$/.test(digits)) {
+        return false;
+    }
+
+    const weights = [
+        [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+        [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2],
+    ];
+
+    for (let position = 12; position <= 13; position++) {
+        let sum = 0;
+
+        for (let index = 0; index < position; index++) {
+            sum += Number(digits[index]) * weights[position - 12][index];
+        }
+
+        const rest = sum % 11;
+        const check = rest < 2 ? 0 : 11 - rest;
+
+        if (check !== Number(digits[position])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function cpfCnpjIsValid(value) {
+    const digits = onlyDigits(value);
+
+    return digits.length === 11 ? cpfIsValid(value) : (digits.length === 14 && cnpjIsValid(value));
+}
+
+document.querySelectorAll('[data-mask-cpf-cnpj]').forEach((input) => {
     input.addEventListener('input', () => {
-        input.value = maskCpf(input.value);
+        input.value = maskCpfCnpj(input.value);
         input.classList.remove('is-invalid');
     });
     input.addEventListener('blur', () => {
-        if (input.value.trim() !== '' && !cpfIsValid(input.value)) {
+        if (input.value.trim() !== '' && !cpfCnpjIsValid(input.value)) {
             input.classList.add('is-invalid');
         }
+    });
+});
+
+document.querySelectorAll('[data-mask-phone]').forEach((input) => {
+    input.addEventListener('input', () => {
+        input.value = maskPhoneBr(input.value);
     });
 });
 
@@ -1040,7 +1121,7 @@ document.querySelectorAll('[data-mask-cep]').forEach((input) => {
 
 document.querySelector('.patients-form')?.addEventListener('submit', (event) => {
     const nameInput = event.currentTarget.querySelector('[name="nome"]');
-    const cpfInput = event.currentTarget.querySelector('[data-mask-cpf]');
+    const cpfInput = event.currentTarget.querySelector('[data-mask-cpf-cnpj]');
 
     if (nameInput && nameInput.value.trim() === '') {
         showPatientSavePopup('Informe o nome do paciente.');
@@ -1050,9 +1131,9 @@ document.querySelector('.patients-form')?.addEventListener('submit', (event) => 
         return;
     }
 
-    if (cpfInput && cpfInput.value.trim() !== '' && !cpfIsValid(cpfInput.value)) {
+    if (cpfInput && cpfInput.value.trim() !== '' && !cpfCnpjIsValid(cpfInput.value)) {
         cpfInput.classList.add('is-invalid');
-        showPatientSavePopup('Informe um CPF valido.');
+        showPatientSavePopup('Informe um CPF ou CNPJ valido.');
         openPatientTab('#patientIdentityPane');
         window.setTimeout(() => cpfInput.focus({ preventScroll: true }), 100);
         event.preventDefault();

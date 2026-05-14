@@ -2,10 +2,46 @@
 <?php
 app_install_schema($conn);
 
+if (app_has_users($conn)) {
+    app_ensure_default_developer_user($conn);
+}
+
 $message = null;
 $messageType = 'warning';
 $postedAction = '';
-$selectedClinicId = (int) ($_POST['clinica_id'] ?? 0);
+$clinicCnpjInput = trim((string) ($_POST['clinica_cnpj'] ?? ''));
+$selectedClinicId = 0;
+
+function login_resolve_clinic_id_from_cnpj(mysqli $conn, string $cnpj, ?string &$message): ?int
+{
+    $cnpj = trim($cnpj);
+
+    if ($cnpj === '') {
+        return null;
+    }
+
+    if (strlen(app_only_digits($cnpj)) !== 14) {
+        $message = 'Informe o CNPJ da clinica com 14 digitos.';
+
+        return null;
+    }
+
+    $clinics = app_active_clinics_by_cnpj($conn, $cnpj, 2);
+
+    if (count($clinics) > 1) {
+        $message = 'Este CNPJ esta vinculado a mais de uma clinica ativa. Fale com o suporte.';
+
+        return null;
+    }
+
+    if ($clinics === []) {
+        $message = 'CNPJ da clinica nao encontrado.';
+
+        return null;
+    }
+
+    return (int) $clinics[0]['id'];
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedAction = $_POST['action'] ?? '';
@@ -16,7 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             trim((string) ($_POST['clinica_nome'] ?? '')),
             trim((string) ($_POST['nome'] ?? '')),
             trim((string) ($_POST['login'] ?? '')),
-            (string) ($_POST['senha'] ?? '')
+            (string) ($_POST['senha'] ?? ''),
+            (string) ($_POST['clinica_cnpj'] ?? '')
         );
 
         if ($result['ok']) {
@@ -28,18 +65,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (app_has_users($conn) && $postedAction === 'login') {
-        $result = app_attempt_login(
-            $conn,
-            trim((string) ($_POST['login'] ?? '')),
-            (string) ($_POST['senha'] ?? ''),
-            $selectedClinicId > 0 ? $selectedClinicId : null
-        );
+        $selectedClinicId = login_resolve_clinic_id_from_cnpj($conn, $clinicCnpjInput, $message) ?? 0;
 
-        if ($result['ok']) {
-            app_redirect(app_profile_home());
+        if ($message === null) {
+            $result = app_attempt_login(
+                $conn,
+                trim((string) ($_POST['login'] ?? '')),
+                (string) ($_POST['senha'] ?? ''),
+                $selectedClinicId > 0 ? $selectedClinicId : null
+            );
+
+            if ($result['ok']) {
+                app_redirect(app_profile_home());
+            }
+
+            $message = $result['message'];
         }
-
-        $message = $result['message'];
     }
 
     if (app_has_users($conn) && $postedAction === 'create_account') {
@@ -54,31 +95,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (app_has_users($conn) && $postedAction === 'reset_password') {
-        $result = app_reset_user_password(
-            $conn,
-            trim((string) ($_POST['login'] ?? '')),
-            (string) ($_POST['codigo_reset'] ?? ''),
-            (string) ($_POST['nova_senha'] ?? ''),
-            (string) ($_POST['confirmar_senha'] ?? ''),
-            $selectedClinicId > 0 ? $selectedClinicId : null
-        );
+        $selectedClinicId = login_resolve_clinic_id_from_cnpj($conn, $clinicCnpjInput, $message) ?? 0;
 
-        if ($result['ok']) {
-            app_flash('success', $result['message']);
-            app_redirect('login.php');
+        if ($message === null) {
+            $result = app_reset_user_password(
+                $conn,
+                trim((string) ($_POST['login'] ?? '')),
+                (string) ($_POST['codigo_reset'] ?? ''),
+                (string) ($_POST['nova_senha'] ?? ''),
+                (string) ($_POST['confirmar_senha'] ?? ''),
+                $selectedClinicId > 0 ? $selectedClinicId : null
+            );
+
+            if ($result['ok']) {
+                app_flash('success', $result['message']);
+                app_redirect('login.php');
+            }
+
+            $message = $result['message'];
         }
-
-        $message = $result['message'];
     }
 }
 
 $flash = app_take_flash();
 $setupMode = !app_has_users($conn);
 $activeClinics = $setupMode ? [] : app_active_clinics($conn);
-
-if ($selectedClinicId <= 0 && count($activeClinics) === 1) {
-    $selectedClinicId = (int) ($activeClinics[0]['id'] ?? 0);
-}
+$defaultClinicCnpj = count($activeClinics) === 1 ? (string) ($activeClinics[0]['cnpj'] ?? '') : '';
+$clinicCnpjValue = $clinicCnpjInput !== '' ? $clinicCnpjInput : $defaultClinicCnpj;
 
 $createAccountMode = !$setupMode && (((string) ($_GET['criar_conta'] ?? '') === '1') || $postedAction === 'create_account');
 $pageTitle = $setupMode ? 'Configuracao inicial' : ($createAccountMode ? 'Criar conta da clinica' : 'Acesso ao sistema');
@@ -86,7 +129,7 @@ $pageDescription = $setupMode
     ? 'Cadastre a primeira clinica e o primeiro usuario desenvolvedor deste computador.'
     : ($createAccountMode
         ? 'Cadastre uma nova clinica local com seu usuario administrativo.'
-        : 'Entre com seu login e sua senha para acessar o modulo do seu perfil.');
+        : 'Entre com o CNPJ da clinica, seu login e sua senha para acessar o modulo do seu perfil.');
 ?>
 <!DOCTYPE html>
 <html>
@@ -156,18 +199,23 @@ body {
 </div>
 
 <div>
+<label class="form-label">CNPJ da clinica</label>
+<input type="text" name="clinica_cnpj" class="form-control" data-mask-cnpj maxlength="18" value="<?= app_h((string) ($_POST['clinica_cnpj'] ?? '')) ?>">
+</div>
+
+<div>
 <label class="form-label">Nome de exibicao</label>
-<input type="text" name="nome" class="form-control" required>
+<input type="text" name="nome" class="form-control" required value="<?= app_h((string) ($_POST['nome'] ?? app_default_developer_name())) ?>">
 </div>
 
 <div>
 <label class="form-label">Login</label>
-<input type="text" name="login" class="form-control" required>
+<input type="text" name="login" class="form-control" required value="<?= app_h((string) ($_POST['login'] ?? app_default_developer_login())) ?>">
 </div>
 
 <div>
 <label class="form-label">Senha</label>
-<input type="password" name="senha" class="form-control" minlength="6" required>
+<input type="password" name="senha" class="form-control" minlength="6" required value="<?= app_h((string) ($_POST['senha'] ?? app_default_developer_password())) ?>">
 </div>
 
 <button class="btn btn-primary btn-lg">Criar usuario inicial</button>
@@ -176,9 +224,18 @@ body {
 <form method="POST" class="d-grid gap-3">
 <input type="hidden" name="action" value="create_account">
 
+<div class="alert alert-info mb-0">
+Usuario padrao do desenvolvedor sera criado automaticamente em todas as clinicas.
+</div>
+
 <div>
 <label class="form-label">Nome da clinica</label>
 <input type="text" name="clinica_nome" class="form-control" required autofocus value="<?= app_h((string) ($_POST['clinica_nome'] ?? '')) ?>">
+</div>
+
+<div>
+<label class="form-label">CNPJ da clinica</label>
+<input type="text" name="clinica_cnpj" class="form-control" data-mask-cnpj maxlength="18" value="<?= app_h((string) ($_POST['clinica_cnpj'] ?? '')) ?>">
 </div>
 
 <div class="row g-3">
@@ -215,25 +272,15 @@ body {
 <input type="hidden" name="action" value="login">
 
 <div>
-<label class="form-label">Login</label>
-<input type="text" name="login" class="form-control" required autofocus value="<?= app_h((string) ($_POST['login'] ?? '')) ?>">
+<label class="form-label">CNPJ da clinica</label>
+<input type="text" name="clinica_cnpj" class="form-control" data-mask-cnpj maxlength="18" autofocus value="<?= app_h($clinicCnpjValue) ?>" placeholder="00.000.000/0000-00">
+<div class="form-text">Informe para escolher a clinica. Deixe em branco se seu login for unico.</div>
 </div>
 
-<?php if ($activeClinics): ?>
 <div>
-<label class="form-label">Clinica</label>
-<select name="clinica_id" class="form-select">
-<option value="">Selecione quando houver login repetido</option>
-<?php foreach ($activeClinics as $clinic): ?>
-<?php $clinicId = (int) ($clinic['id'] ?? 0); ?>
-<option value="<?= $clinicId ?>" <?= $selectedClinicId === $clinicId ? 'selected' : '' ?>>
-<?= app_h((string) ($clinic['nome_fantasia'] ?? '')) ?>
-</option>
-<?php endforeach; ?>
-</select>
-<div class="form-text">Use este campo quando o mesmo login existir em mais de uma clinica.</div>
+<label class="form-label">Login</label>
+<input type="text" name="login" class="form-control" required value="<?= app_h((string) ($_POST['login'] ?? '')) ?>">
 </div>
-<?php endif; ?>
 
 <div>
 <label class="form-label">Senha</label>
@@ -255,24 +302,14 @@ body {
 <input type="hidden" name="action" value="reset_password">
 
 <div>
+<label class="form-label">CNPJ da clinica</label>
+<input type="text" name="clinica_cnpj" class="form-control" data-mask-cnpj maxlength="18" value="<?= app_h($clinicCnpjValue) ?>" placeholder="00.000.000/0000-00">
+</div>
+
+<div>
 <label class="form-label">Login</label>
 <input type="text" name="login" class="form-control" required value="<?= app_h((string) ($_POST['login'] ?? '')) ?>">
 </div>
-
-<?php if ($activeClinics): ?>
-<div>
-<label class="form-label">Clinica</label>
-<select name="clinica_id" class="form-select">
-<option value="">Selecione quando houver login repetido</option>
-<?php foreach ($activeClinics as $clinic): ?>
-<?php $clinicId = (int) ($clinic['id'] ?? 0); ?>
-<option value="<?= $clinicId ?>" <?= $selectedClinicId === $clinicId ? 'selected' : '' ?>>
-<?= app_h((string) ($clinic['nome_fantasia'] ?? '')) ?>
-</option>
-<?php endforeach; ?>
-</select>
-</div>
-<?php endif; ?>
 
 <div>
 <label class="form-label">Codigo local de reset</label>
@@ -298,6 +335,29 @@ body {
 </div>
 </div>
 </div>
+
+<script>
+function loginDigits(value) {
+    return String(value || '').replace(/\D+/g, '');
+}
+
+function loginMaskCnpj(value) {
+    const digits = loginDigits(value).slice(0, 14);
+
+    return digits
+        .replace(/^(\d{2})(\d)/, '$1.$2')
+        .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+        .replace(/^(\d{2})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3/$4')
+        .replace(/^(\d{2})\.(\d{3})\.(\d{3})\/(\d{4})(\d)/, '$1.$2.$3/$4-$5');
+}
+
+document.querySelectorAll('[data-mask-cnpj]').forEach((input) => {
+    input.value = loginMaskCnpj(input.value);
+    input.addEventListener('input', () => {
+        input.value = loginMaskCnpj(input.value);
+    });
+});
+</script>
 
 </body>
 </html>

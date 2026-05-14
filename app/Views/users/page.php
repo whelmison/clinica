@@ -175,6 +175,7 @@ body {
 <?php
 $isEditingUser = (int) ($userFormValues['user_id'] ?? 0) > 0;
 $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0));
+$isDefaultUserForm = !empty($userFormValues['usuario_padrao']);
 ?>
 
 <div class="container page-shell users-shell">
@@ -233,10 +234,17 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                                 && strcasecmp($professionalName, $displayName) !== 0;
                             $professionalLine = $showProfessionalName ? $professionalName : ($professionalName === '' ? 'Sem vinculo' : '');
                             $isCurrentUser = (int) ($currentUser['id'] ?? 0) === (int) $user['id'];
+                            $isDefaultUser = (int) ($user['usuario_padrao'] ?? 0) === 1;
+                            $deleteTitle = $isCurrentUser
+                                ? 'Nao e permitido excluir o usuario logado.'
+                                : ($isDefaultUser ? 'Usuario padrao sincronizado pelo painel do desenvolvedor.' : '');
                         ?>
                         <tr class="<?= $activeUserId > 0 && $activeUserId === (int) $user['id'] ? 'is-active' : '' ?>">
                             <td>
                                 <div class="user-login"><?= app_h($userLogin) ?></div>
+                                <?php if ($isDefaultUser): ?>
+                                    <span class="badge text-bg-info">Padrao global</span>
+                                <?php endif; ?>
                                 <?php if ($showDisplayName): ?>
                                     <div class="small text-muted"><?= app_h($displayName) ?></div>
                                 <?php endif; ?>
@@ -257,7 +265,7 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                                         <input type="hidden" name="user_id" value="<?= (int) $user['id'] ?>">
                                         <input type="hidden" name="busca_usuario" value="<?= app_h($userFilters['busca_usuario']) ?>">
                                         <input type="hidden" name="user_page" value="<?= (int) $usersPagination['page'] ?>">
-                                        <button class="btn btn-sm btn-outline-danger" type="submit" <?= $isCurrentUser ? 'disabled title="Nao e permitido excluir o usuario logado."' : '' ?>>Excluir</button>
+                                        <button class="btn btn-sm btn-outline-danger" type="submit" <?= ($isCurrentUser || $isDefaultUser) ? 'disabled title="' . app_h($deleteTitle) . '"' : '' ?>>Excluir</button>
                                     </form>
                                 </div>
                             </td>
@@ -294,6 +302,11 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
             </div>
             <div class="modal-body">
+                <?php if ($isDefaultUserForm): ?>
+                    <div class="alert alert-info">
+                        Este usuario e o padrao global. Altere login e senha no painel do desenvolvedor para refletir em todas as clinicas.
+                    </div>
+                <?php endif; ?>
                 <form method="POST" class="row g-3 users-form">
                     <?php if ($isEditingUser): ?>
                         <input type="hidden" name="user_id" value="<?= (int) $userFormValues['user_id'] ?>">
@@ -302,19 +315,19 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                     <input type="hidden" name="user_page" value="<?= (int) $usersPagination['page'] ?>">
                     <div class="col-12">
                         <label class="form-label small text-muted">Nome de exibicao</label>
-                        <input type="text" name="nome_exibicao" class="form-control" data-page-autofocus="1" value="<?= app_h((string) $userFormValues['nome_exibicao']) ?>" required>
+                        <input type="text" name="nome_exibicao" class="form-control" data-page-autofocus="1" value="<?= app_h((string) $userFormValues['nome_exibicao']) ?>" required <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted">Login</label>
-                        <input type="text" name="login" class="form-control" value="<?= app_h((string) $userFormValues['login']) ?>" required>
+                        <input type="text" name="login" class="form-control" value="<?= app_h((string) $userFormValues['login']) ?>" required <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted">Senha</label>
-                        <input type="password" name="senha" class="form-control" placeholder="<?= $isEditingUser ? 'Preencha apenas para trocar' : 'Minimo 6 caracteres' ?>">
+                        <input type="password" name="senha" class="form-control" placeholder="<?= $isEditingUser ? 'Preencha apenas para trocar' : 'Minimo 6 caracteres' ?>" <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted">Perfil</label>
-                        <select name="perfil" class="form-select" required>
+                        <select name="perfil" class="form-select" required <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                             <?php foreach (['profissional' => 'Profissional', 'secretaria' => 'Secretaria', 'administrativo' => 'Administrativo', 'desenvolvedor' => 'Desenvolvedor'] as $value => $label): ?>
                                 <option value="<?= app_h($value) ?>" <?= $userFormValues['perfil'] === $value ? 'selected' : '' ?>><?= app_h($label) ?></option>
                             <?php endforeach; ?>
@@ -322,7 +335,7 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted">Profissional vinculado</label>
-                        <select name="profissional_relacionado" class="form-select">
+                        <select name="profissional_relacionado" class="form-select" <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                             <option value="">Nao vincular</option>
                             <?php foreach ($professionalOptions as $professional): ?>
                                 <option value="<?= (int) $professional['id'] ?>" <?= (int) $userFormValues['profissional_relacionado'] === (int) $professional['id'] ? 'selected' : '' ?>>
@@ -333,7 +346,7 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                     </div>
                     <div class="col-12">
                         <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="ativo" id="userActive" <?= !empty($userFormValues['ativo']) ? 'checked' : '' ?>>
+                            <input class="form-check-input" type="checkbox" name="ativo" id="userActive" <?= !empty($userFormValues['ativo']) ? 'checked' : '' ?> <?= $isDefaultUserForm ? 'disabled' : '' ?>>
                             <label class="form-check-label" for="userActive">Usuario ativo</label>
                         </div>
                     </div>
@@ -341,10 +354,10 @@ $activeUserId = (int) ($userFormValues['user_id'] ?? ($selectedUser['id'] ?? 0))
                         <span class="users-hint">Perfis profissionais exigem vinculo com cadastro.</span>
                         <div class="d-flex flex-wrap gap-2">
                             <?php if ($isEditingUser): ?>
-                                <button type="submit" name="action" value="delete_user" class="btn btn-outline-danger" onclick="return confirm('Excluir este usuario?')" <?= (int) ($currentUser['id'] ?? 0) === (int) $userFormValues['user_id'] ? 'disabled title="Nao e permitido excluir o usuario logado."' : '' ?>>Excluir</button>
+                                <button type="submit" name="action" value="delete_user" class="btn btn-outline-danger" onclick="return confirm('Excluir este usuario?')" <?= ((int) ($currentUser['id'] ?? 0) === (int) $userFormValues['user_id'] || $isDefaultUserForm) ? 'disabled title="' . app_h($isDefaultUserForm ? 'Usuario padrao global.' : 'Nao e permitido excluir o usuario logado.') . '"' : '' ?>>Excluir</button>
                             <?php endif; ?>
                             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-                            <button class="btn btn-primary px-4" name="action" value="save_user"><?= $isEditingUser ? 'Salvar alteracoes' : 'Salvar usuario' ?></button>
+                            <button class="btn btn-primary px-4" name="action" value="save_user" <?= $isDefaultUserForm ? 'disabled title="Altere no painel do desenvolvedor."' : '' ?>><?= $isEditingUser ? 'Salvar alteracoes' : 'Salvar usuario' ?></button>
                         </div>
                     </div>
                 </form>

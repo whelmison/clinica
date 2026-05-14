@@ -451,6 +451,51 @@ function app_drop_single_login_unique_indexes(mysqli $conn): void
     }
 }
 
+function app_schema_cnpj_digits(?string $value): string
+{
+    return preg_replace('/\D+/', '', (string) $value) ?: '';
+}
+
+function app_schema_format_cnpj(?string $value): ?string
+{
+    $digits = app_schema_cnpj_digits($value);
+
+    if (strlen($digits) !== 14) {
+        return null;
+    }
+
+    return substr($digits, 0, 2) . '.' . substr($digits, 2, 3) . '.' . substr($digits, 5, 3) . '/' . substr($digits, 8, 4) . '-' . substr($digits, 12, 2);
+}
+
+function app_normalize_clinic_cnpjs(mysqli $conn): void
+{
+    if (!app_table_exists($conn, 'clinicas') || !app_column_exists($conn, 'clinicas', 'cnpj_digits')) {
+        return;
+    }
+
+    $result = $conn->query('SELECT id, cnpj FROM clinicas ORDER BY id');
+
+    if (!$result) {
+        return;
+    }
+
+    $seen = [];
+
+    while ($row = $result->fetch_assoc()) {
+        $clinicId = (int) ($row['id'] ?? 0);
+        $digits = app_schema_cnpj_digits((string) ($row['cnpj'] ?? ''));
+        $formatted = app_schema_format_cnpj($digits);
+
+        if ($clinicId <= 0 || $formatted === null || isset($seen[$digits])) {
+            app_stmt_execute($conn, 'UPDATE clinicas SET cnpj = NULL, cnpj_digits = NULL WHERE id = ?', 'i', [$clinicId]);
+            continue;
+        }
+
+        $seen[$digits] = true;
+        app_stmt_execute($conn, 'UPDATE clinicas SET cnpj = ?, cnpj_digits = ? WHERE id = ?', 'ssi', [$formatted, $digits, $clinicId]);
+    }
+}
+
 function app_ensure_clinics_table(mysqli $conn): void
 {
     $conn->query('CREATE TABLE IF NOT EXISTS clinicas (
@@ -458,6 +503,7 @@ function app_ensure_clinics_table(mysqli $conn): void
         nome_fantasia VARCHAR(180) NOT NULL,
         razao_social VARCHAR(180) NULL,
         cnpj VARCHAR(20) NULL,
+        cnpj_digits VARCHAR(14) NULL,
         telefone VARCHAR(30) NULL,
         whatsapp VARCHAR(30) NULL,
         email VARCHAR(180) NULL,
@@ -465,10 +511,20 @@ function app_ensure_clinics_table(mysqli $conn): void
         cidade VARCHAR(120) NULL,
         estado VARCHAR(2) NULL,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
+        liberada TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_clinicas_ativo_nome (ativo, nome_fantasia)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    app_ensure_column($conn, 'clinicas', 'cnpj', 'VARCHAR(20) NULL');
+    app_ensure_column($conn, 'clinicas', 'cnpj_digits', 'VARCHAR(14) NULL');
+    app_ensure_column($conn, 'clinicas', 'liberada', 'TINYINT(1) NOT NULL DEFAULT 1');
+    app_normalize_clinic_cnpjs($conn);
+    app_drop_index_if_exists($conn, 'clinicas', 'idx_clinicas_cnpj');
+    app_ensure_index($conn, 'clinicas', 'uq_clinicas_cnpj', 'CREATE UNIQUE INDEX uq_clinicas_cnpj ON clinicas (cnpj)');
+    app_ensure_index($conn, 'clinicas', 'uq_clinicas_cnpj_digits', 'CREATE UNIQUE INDEX uq_clinicas_cnpj_digits ON clinicas (cnpj_digits)');
+    app_ensure_index($conn, 'clinicas', 'idx_clinicas_liberada_nome', 'CREATE INDEX idx_clinicas_liberada_nome ON clinicas (liberada, nome_fantasia)');
 }
 
 function app_ensure_default_clinic(mysqli $conn): int
@@ -483,7 +539,7 @@ function app_ensure_default_clinic(mysqli $conn): int
 
     app_stmt_execute(
         $conn,
-        'INSERT INTO clinicas (nome_fantasia, ativo) VALUES (?, 1)',
+        'INSERT INTO clinicas (nome_fantasia, ativo, liberada) VALUES (?, 1, 1)',
         's',
         [app_default_clinic_name()]
     );
@@ -671,6 +727,56 @@ function app_financial_seed_accounts(mysqli $conn, ?int $clinicId = null): void
     }
 }
 
+function app_patient_sheet_detail_columns(): array
+{
+    return [
+        'postura_observacoes_gerais',
+        'postura_cabeca',
+        'postura_ombros',
+        'postura_coluna',
+        'postura_pelve',
+        'postura_membros',
+        'amplitude_cervical',
+        'amplitude_ombro',
+        'amplitude_cotovelo',
+        'amplitude_punho_mao',
+        'amplitude_coluna',
+        'amplitude_quadril',
+        'amplitude_joelho',
+        'amplitude_tornozelo_pe',
+        'forca_cervicais',
+        'forca_ombro',
+        'forca_cotovelo',
+        'forca_punho_mao',
+        'forca_coluna',
+        'forca_quadril',
+        'forca_joelho',
+        'forca_tornozelo_pe',
+        'sensibilidade_tatil',
+        'sensibilidade_termica',
+        'sensibilidade_dolorosa',
+        'equilibrio_estatico',
+        'equilibrio_dinamico',
+        'marcha',
+        'avd_higiene',
+        'avd_vestir',
+        'avd_alimentacao',
+        'avd_locomocao',
+        'avd_outras',
+    ];
+}
+
+function app_ensure_patient_sheet_detail_schema(mysqli $conn): void
+{
+    if (!app_table_exists($conn, 'paciente_fichas_avaliacao')) {
+        return;
+    }
+
+    foreach (app_patient_sheet_detail_columns() as $column) {
+        app_ensure_column($conn, 'paciente_fichas_avaliacao', $column, 'VARCHAR(180) NULL');
+    }
+}
+
 function app_install_schema(mysqli $conn): void
 {
     static $installed = false;
@@ -686,7 +792,7 @@ function app_install_schema(mysqli $conn): void
         id INT AUTO_INCREMENT PRIMARY KEY,
         nome VARCHAR(255) NOT NULL,
         telefone VARCHAR(30) NULL,
-        cpf VARCHAR(14) NULL,
+        cpf VARCHAR(20) NULL,
         data_nascimento DATE NULL,
         cep VARCHAR(9) NULL,
         endereco VARCHAR(255) NULL,
@@ -732,6 +838,7 @@ function app_install_schema(mysqli $conn): void
         profissional_id INT NULL,
         nome_exibicao VARCHAR(255) NULL,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
+        usuario_padrao TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_usuarios_clinica_login (clinica_id, login),
         INDEX idx_usuarios_clinica (clinica_id),
@@ -953,7 +1060,8 @@ function app_install_schema(mysqli $conn): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
     app_ensure_column($conn, 'pacientes', 'telefone', 'VARCHAR(30) NULL');
-    app_ensure_column($conn, 'pacientes', 'cpf', 'VARCHAR(14) NULL');
+    app_ensure_column($conn, 'pacientes', 'cpf', 'VARCHAR(20) NULL');
+    @$conn->query('ALTER TABLE pacientes MODIFY cpf VARCHAR(20) NULL');
     app_ensure_column($conn, 'pacientes', 'data_nascimento', 'DATE NULL');
     app_ensure_column($conn, 'pacientes', 'cep', 'VARCHAR(9) NULL');
     app_ensure_column($conn, 'pacientes', 'endereco', 'VARCHAR(255) NULL');
@@ -972,6 +1080,8 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'pacientes', 'horario_preferencia', 'VARCHAR(20) NULL');
 
     app_ensure_column($conn, 'planos', 'valor_sessao', 'DECIMAL(10,2) DEFAULT 0');
+    app_ensure_column($conn, 'usuarios', 'usuario_padrao', 'TINYINT(1) NOT NULL DEFAULT 0');
+    app_ensure_index($conn, 'usuarios', 'idx_usuarios_padrao', 'CREATE INDEX idx_usuarios_padrao ON usuarios (usuario_padrao)');
     app_ensure_column($conn, 'profissionais', 'permite_editar_guias', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'permite_secretaria_liberar_agenda', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'salario_fixo', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
@@ -1066,6 +1176,7 @@ function app_install_schema(mysqli $conn): void
 
     $defaultClinicId = app_ensure_multiclinic_schema($conn, $defaultClinicId);
     app_ensure_profile_permissions_schema($conn);
+    app_ensure_patient_sheet_detail_schema($conn);
 
     app_ensure_index($conn, 'guias', 'idx_guias_paciente', 'CREATE INDEX idx_guias_paciente ON guias (paciente_id)');
     app_ensure_index($conn, 'guias', 'idx_guias_profissional', 'CREATE INDEX idx_guias_profissional ON guias (profissional_id)');
@@ -1127,6 +1238,12 @@ function app_bootstrap(mysqli $conn): void
     }
 
     if (!app_is_logged_in()) {
+        app_redirect('login.php');
+    }
+
+    if (!app_is_developer() && !app_current_clinic_is_released($conn)) {
+        app_logout_user();
+        app_flash('warning', 'Clinica bloqueada no momento. Fale com o suporte para liberar o acesso.');
         app_redirect('login.php');
     }
 

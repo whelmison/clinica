@@ -25,6 +25,7 @@ $userFormValues = [
     'perfil' => (string) ($selectedUser['perfil'] ?? 'profissional'),
     'profissional_relacionado' => (int) ($selectedUser['profissional_id'] ?? 0),
     'ativo' => !isset($selectedUser['ativo']) || (int) ($selectedUser['ativo'] ?? 1) === 1,
+    'usuario_padrao' => (int) ($selectedUser['usuario_padrao'] ?? 0) === 1,
 ];
 $autoOpenUserModal = $selectedUser !== null;
 
@@ -40,6 +41,7 @@ if ($requestMethod === 'POST') {
             'perfil' => app_request_post('perfil', 'profissional') ?? 'profissional',
             'profissional_relacionado' => app_post_int('profissional_relacionado'),
             'ativo' => isset($_POST['ativo']),
+            'usuario_padrao' => (int) ($selectedUser['usuario_padrao'] ?? 0) === 1,
         ];
         $result = $professionalService->saveUser(app_post_int('user_id') ?: null, $_POST);
         $autoOpenUserModal = !$result['ok'];

@@ -4,6 +4,8 @@ include 'config/db.php';
 use Clinic\Repositories\PatientRepository;
 use Clinic\Services\PatientService;
 
+app_install_schema($conn);
+
 $pdo = app_pdo();
 $patientRepository = new PatientRepository($pdo);
 $patientService = new PatientService($patientRepository);

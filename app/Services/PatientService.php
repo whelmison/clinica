@@ -48,7 +48,7 @@ final class PatientService
     private function normalize(array $input): array
     {
         $name = trim((string) ($input['nome'] ?? ''));
-        $cpf = trim((string) ($input['cpf'] ?? ''));
+        $document = trim((string) ($input['cpf'] ?? ''));
         $birthInput = trim((string) ($input['data_nascimento'] ?? ''));
         $birthDate = null;
 
@@ -56,8 +56,8 @@ final class PatientService
             throw new InvalidArgumentException('Informe o nome do paciente.');
         }
 
-        if ($cpf !== '' && !\app_cpf_valid($cpf)) {
-            throw new InvalidArgumentException('Informe um CPF valido.');
+        if ($document !== '' && !\app_cpf_cnpj_valid($document)) {
+            throw new InvalidArgumentException('Informe um CPF ou CNPJ valido.');
         }
 
         if ($birthInput !== '') {
@@ -75,8 +75,8 @@ final class PatientService
 
         return [
             'nome' => $name,
-            'telefone' => trim((string) ($input['telefone'] ?? '')),
-            'cpf' => $cpf !== '' ? \app_format_cpf($cpf) : '',
+            'telefone' => \app_format_phone_br((string) ($input['telefone'] ?? '')),
+            'cpf' => $document !== '' ? \app_format_cpf_cnpj($document) : '',
             'data_nascimento' => $birthDate,
             'cep' => $cep,
             'endereco' => trim((string) ($input['endereco'] ?? '')),
@@ -85,7 +85,7 @@ final class PatientService
             'bairro' => trim((string) ($input['bairro'] ?? '')),
             'cidade' => trim((string) ($input['cidade'] ?? '')),
             'estado' => strtoupper(substr(trim((string) ($input['estado'] ?? '')), 0, 2)),
-            'telefone_emergencia' => trim((string) ($input['telefone_emergencia'] ?? '')),
+            'telefone_emergencia' => \app_format_phone_br((string) ($input['telefone_emergencia'] ?? '')),
             'observacoes' => trim((string) ($input['observacoes'] ?? '')),
             'indicado_por' => trim((string) ($input['indicado_por'] ?? '')),
             'prontuario' => trim((string) ($input['prontuario'] ?? '')),
