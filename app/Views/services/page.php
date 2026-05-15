@@ -1,3 +1,4 @@
+<?php $isPriceTab = ($activeTab ?? 'servicos') === 'precos'; ?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -106,6 +107,102 @@ body {
     color: #68828f;
     font-size: 0.72rem;
 }
+.services-tabs {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+.services-tabs .btn {
+    min-height: 34px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    padding: 0.38rem 0.8rem;
+}
+.service-price-report {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+.service-price-report-table {
+    margin: 0;
+    min-width: 760px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+.service-price-report-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f5fafb;
+    border-bottom: 1px solid rgba(31, 122, 140, 0.16);
+    color: #5f7885;
+    font-size: 0.62rem;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+.service-price-report-table th,
+.service-price-report-table td {
+    padding: 0.48rem 0.62rem;
+    vertical-align: middle;
+}
+.service-price-report-table tbody td {
+    border-bottom: 1px solid rgba(19, 74, 89, 0.07);
+}
+.service-price-service-row td {
+    background: #edf8fa;
+    border-top: 1px solid rgba(31, 122, 140, 0.18);
+    border-bottom: 1px solid rgba(31, 122, 140, 0.12);
+}
+.service-price-master {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+}
+.service-price-master strong {
+    display: block;
+    color: #173642;
+    font-size: 0.84rem;
+}
+.service-price-master span,
+.service-price-empty {
+    color: #68828f;
+    font-size: 0.7rem;
+}
+.service-price-report > .service-price-empty {
+    padding: 0.75rem;
+}
+.service-price-actions {
+    white-space: nowrap;
+}
+.service-price-detail-empty td {
+    color: #68828f;
+    font-size: 0.72rem;
+    padding-left: 1.25rem;
+}
+.service-price-note {
+    max-width: 320px;
+    white-space: normal;
+}
+.services-price-page {
+    overflow: auto;
+}
+.services-price-page .services-shell,
+.services-price-page .services-layout,
+.services-price-page .services-table-card,
+.services-price-page .services-table-card .card-body {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+}
+.services-price-page .services-table-card {
+    flex: none;
+}
+.services-price-page .service-price-report {
+    overflow: visible;
+}
 @media (max-width: 991px) {
     html,
     body {
@@ -120,10 +217,14 @@ body {
         min-height: auto;
         overflow: visible;
     }
+    .service-price-master {
+        align-items: flex-start;
+        flex-direction: column;
+    }
 }
 </style>
 </head>
-<body>
+<body class="<?= $isPriceTab ? 'services-price-page' : 'services-list-page' ?>">
 
 <?php include 'partials/menu.php'; ?>
 
@@ -132,20 +233,31 @@ body {
     <section class="page-hero services-hero">
         <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-end">
             <div>
-                <h3 class="mb-2">Catalogo de servicos</h3>
-                <p>Lista central de servicos com filtro, duracao padrao, status e acesso separado para novo e editar.</p>
+                <h3 class="mb-2"><?= $isPriceTab ? 'Precos por servico' : 'Catalogo de servicos' ?></h3>
+                <p><?= $isPriceTab ? 'Relatorio mestre-detalhe com cada servico e seus valores por plano.' : 'Lista central de servicos com filtro, duracao padrao, status e acesso separado para novo e editar.' ?></p>
             </div>
             <div class="d-flex gap-2 flex-wrap">
-                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'jpg', 'servicos')">Exportar JPG</button>
-                <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'pdf', 'servicos')">Exportar PDF</button>
-                <button type="button" class="btn btn-light btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#serviceFormModal">+ Novo servico</button>
+                <?php if ($isPriceTab): ?>
+                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicePricesExportArea', 'jpg', 'precos_servicos')">Exportar JPG</button>
+                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicePricesExportArea', 'pdf', 'precos_servicos')">Exportar PDF</button>
+                <?php else: ?>
+                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'jpg', 'servicos')">Exportar JPG</button>
+                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'pdf', 'servicos')">Exportar PDF</button>
+                    <a class="btn btn-light btn-sm rounded-pill px-3" href="novo_servico.php">+ Novo servico</a>
+                <?php endif; ?>
             </div>
         </div>
     </section>
 
+    <div class="services-tabs">
+        <a class="btn <?= $isPriceTab ? 'btn-outline-primary' : 'btn-primary' ?>" href="secretaria_servicos.php">Servicos</a>
+        <a class="btn <?= $isPriceTab ? 'btn-primary' : 'btn-outline-primary' ?>" href="secretaria_servicos.php?tab=precos">Relatorio de precos</a>
+    </div>
+
     <div class="soft-card card services-card">
         <div class="card-body">
             <form class="toolbar-grid" method="GET">
+                <input type="hidden" name="tab" value="<?= $isPriceTab ? 'precos' : 'servicos' ?>">
                 <div>
                     <label class="form-label small text-muted">Busca</label>
                     <input type="text" name="busca_servico" class="form-control" data-page-autofocus="1" value="<?= app_h($filters['busca_servico']) ?>" placeholder="Nome do servico">
@@ -154,53 +266,122 @@ body {
                     <button class="btn btn-primary w-100">Filtrar</button>
                 </div>
                 <div class="d-flex align-items-end">
-                    <a href="secretaria_servicos.php" class="btn btn-outline-secondary w-100">Limpar</a>
+                    <a href="secretaria_servicos.php<?= $isPriceTab ? '?tab=precos' : '' ?>" class="btn btn-outline-secondary w-100">Limpar</a>
                 </div>
             </form>
         </div>
     </div>
 
-    <div class="soft-card card services-card services-table-card" id="servicesExportArea">
-        <div class="card-header">
-            <div class="panel-title">
-                <h5>Servicos cadastrados</h5>
-                <span class="text-muted small">novo, editar, listar e filtrar</span>
+    <?php if (!$isPriceTab): ?>
+        <div class="soft-card card services-card services-table-card" id="servicesExportArea">
+            <div class="card-header">
+                <div class="panel-title">
+                    <h5>Servicos cadastrados</h5>
+                    <span class="text-muted small">novo, editar, listar e filtrar</span>
+                </div>
             </div>
-        </div>
-        <div class="card-body">
-            <div class="table-responsive services-table-wrap">
-                <table class="table table-soft align-middle mb-0">
-                    <thead>
-                    <tr>
-                        <th>Servico</th>
-                        <th>Duracao</th>
-                        <th>Agenda</th>
-                        <th>Capacidade</th>
-                        <th>Profissionais</th>
-                        <th>Status</th>
-                        <th class="text-end">Acoes</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($servicesRows as $service): ?>
+            <div class="card-body">
+                <div class="table-responsive services-table-wrap">
+                    <table class="table table-soft align-middle mb-0">
+                        <thead>
                         <tr>
-                            <td><?= app_h((string) $service['nome']) ?></td>
-                            <td><?= (int) $service['tempo_minutos'] ?> min</td>
-                            <td><?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?></td>
-                            <td><?= (int) ($service['capacidade_agendamento'] ?? 1) ?></td>
-                            <td><?= (int) $service['total_profissionais'] ?></td>
-                            <td><?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
-                            <td class="text-end">
-                                <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id']])) ?>">Editar</a>
-                            </td>
+                            <th>Servico</th>
+                            <th>Duracao</th>
+                            <th>Agenda</th>
+                            <th>Capacidade</th>
+                            <th>Profissionais</th>
+                            <th>Status</th>
+                            <th class="text-end">Acoes</th>
                         </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($servicesRows as $service): ?>
+                            <tr>
+                                <td><?= app_h((string) $service['nome']) ?></td>
+                                <td><?= (int) $service['tempo_minutos'] ?> min</td>
+                                <td><?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?></td>
+                                <td><?= (int) ($service['capacidade_agendamento'] ?? 1) ?></td>
+                                <td><?= (int) $service['total_profissionais'] ?></td>
+                                <td><?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
+                                <td class="text-end">
+                                    <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id']])) ?>">Editar</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?= app_render_pagination($pagination) ?>
             </div>
-            <?= app_render_pagination($pagination) ?>
         </div>
-    </div>
+    <?php else: ?>
+        <div class="soft-card card services-card services-table-card" id="servicePricesExportArea">
+            <div class="card-header">
+                <div class="panel-title">
+                    <h5>Relatorio de precos</h5>
+                    <span class="text-muted small">servico, plano e valor</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="service-price-report table-responsive">
+                    <?php if (empty($priceReport)): ?>
+                        <div class="service-price-empty">Nenhum servico encontrado para os filtros informados.</div>
+                    <?php else: ?>
+                        <table class="table table-soft service-price-report-table align-middle">
+                            <thead>
+                            <tr>
+                                <th>Plano</th>
+                                <th>Valor</th>
+                                <th>Status</th>
+                                <th>Guia</th>
+                                <th>Observacoes</th>
+                                <th class="text-end">Acoes</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($priceReport as $service): ?>
+                                <tr class="service-price-service-row">
+                                    <td colspan="6">
+                                        <div class="service-price-master">
+                                            <div>
+                                                <strong><?= app_h((string) $service['nome']) ?></strong>
+                                                <span>
+                                                    <?= (int) $service['tempo_minutos'] ?> min |
+                                                    <?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?> |
+                                                    <?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?>
+                                                </span>
+                                            </div>
+                                            <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id'], 'tab' => 'precos'])) ?>">Abrir precos</a>
+                                        </div>
+                                    </td>
+                                </tr>
+
+                                <?php if (empty($service['precos'])): ?>
+                                    <tr class="service-price-detail-empty">
+                                        <td colspan="6">Sem preco cadastrado para este servico.</td>
+                                    </tr>
+                                <?php else: ?>
+                                    <?php foreach ($service['precos'] as $price): ?>
+                                        <tr>
+                                            <td><?= app_h((string) ($price['plano_nome'] ?: 'Plano nao informado')) ?></td>
+                                            <td><strong><?= app_money_br((float) $price['valor']) ?></strong></td>
+                                            <td><?= (int) $price['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
+                                            <td><?= !empty($price['permite_alterar_guia']) ? 'Editavel' : 'Fixo' ?></td>
+                                            <td class="service-price-note"><?= app_h((string) ($price['observacoes'] ?: '-')) ?></td>
+                                            <td class="text-end service-price-actions">
+                                                <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id'], 'tab' => 'precos'])) ?>">Editar</a>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    <?php endif; ?>
     </div>
 </div>
 

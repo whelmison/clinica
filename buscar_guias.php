@@ -3,6 +3,7 @@ include 'config/db.php';
 
 $pacienteId = app_query_int('paciente_id');
 $profissionalIdFiltro = app_query_int('profissional_id');
+$serviceIdFiltro = app_query_int('servico_id');
 $ignorarAtendimentoId = app_query_int('ignorar_atendimento_id');
 $incluirFinalizadas = app_request_query('incluir_finalizadas', '') === '1';
 
@@ -46,6 +47,12 @@ if (app_is_professional_user()) {
     $whereParams[] = $profissionalIdFiltro;
 }
 
+if ($serviceIdFiltro > 0) {
+    $where[] = '(g.servico_id = ? OR g.servico_id IS NULL)';
+    $whereTypes .= 'i';
+    $whereParams[] = $serviceIdFiltro;
+}
+
 $types = $joinTypes . $whereTypes;
 $params = array_merge($joinParams, $whereParams);
 
@@ -55,6 +62,7 @@ $rows = app_stmt_all(
         g.id,
         g.codigo,
         g.total_sessoes,
+        g.servico_id,
         g.status_operacional,
         g.autorizada,
         COALESCE(a.usadas, 0) AS usadas
@@ -95,7 +103,7 @@ foreach ($rows as $guide) {
     $label = ($code !== '' ? $code : 'Guia') . ' (' . $suffix . ')';
     $style = $remaining <= 1 ? " style='color:red'" : '';
 
-    echo "<option value='" . (int) $guide['id'] . "'{$style}>" . app_h($label) . "</option>";
+    echo "<option value='" . (int) $guide['id'] . "' data-servico-id='" . (int) ($guide['servico_id'] ?? 0) . "'{$style}>" . app_h($label) . "</option>";
 }
 
 if (!$hasGuideOption) {

@@ -7,9 +7,10 @@ $autoOpenGuideModal = app_query_int('open_new') === 1;
 $guideFormValues = [
     'paciente_id' => 0,
     'profissional_id' => 0,
+    'servico_id' => 0,
     'plano_id' => 0,
     'codigo' => '',
-    'total_sessoes' => '',
+    'total_sessoes' => '1',
     'valor_guia' => '',
     'data' => date('Y-m-d'),
     'autorizada' => 0,
@@ -36,6 +37,7 @@ $shouldLoadGuides = app_request_query('filtrar', '') === '1'
     || ($isGuidePost && app_request_post('filter_filtrar', '') === '1')
     || $editGuideId > 0;
 $professionalsForFilter = app_stmt_all($conn, 'SELECT id, nome FROM profissionais WHERE clinica_id = ? ORDER BY nome', 'i', [$clinicId]);
+$plansForModal = app_stmt_all($conn, 'SELECT id, nome FROM planos WHERE clinica_id = ? ORDER BY nome', 'i', [$clinicId]);
 $guideOperationalStatuses = app_guide_operational_statuses();
 
 if (!function_exists('app_legacy_guide_filter_query')) {
@@ -77,6 +79,19 @@ if (!function_exists('app_legacy_guide_filter_inputs')) {
     }
 }
 
+if (!function_exists('app_legacy_guide_locked_for_edit')) {
+    function app_legacy_guide_locked_for_edit(array $guide): bool
+    {
+        $usedSessions = (int) ($guide['total_atendimentos'] ?? $guide['usadas'] ?? $guide['sessoes_usadas'] ?? 0);
+
+        if ($usedSessions > 0) {
+            return true;
+        }
+
+        return app_guide_operational_status_data($guide)['value'] === 'finalizada';
+    }
+}
+
 if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy_guide') {
     if (!$canManageLegacyGuides) {
         app_flash('danger', 'Sem permissao para cadastrar guias.');
@@ -86,6 +101,7 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
     $guideFormValues = [
         'paciente_id' => app_post_int('paciente_id'),
         'profissional_id' => app_post_int('profissional_id'),
+        'servico_id' => app_post_int('servico_id'),
         'plano_id' => app_post_int('plano_id'),
         'codigo' => trim((string) ($_POST['codigo'] ?? '')),
         'total_sessoes' => app_post_int('total_sessoes'),
@@ -107,6 +123,8 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
         $guideMessage = 'Selecione o paciente.';
     } elseif ($guideFormValues['profissional_id'] <= 0) {
         $guideMessage = 'Selecione o profissional.';
+    } elseif ($guideFormValues['servico_id'] <= 0) {
+        $guideMessage = 'Selecione o servico.';
     } elseif ($guideFormValues['plano_id'] <= 0) {
         $guideMessage = 'Selecione o plano.';
     } elseif ($guideFormValues['total_sessoes'] <= 0) {
@@ -114,6 +132,7 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
     } else {
         $pacienteId = (int) $guideFormValues['paciente_id'];
         $profissionalId = (int) $guideFormValues['profissional_id'];
+        $servicoId = (int) $guideFormValues['servico_id'];
         $planoId = (int) $guideFormValues['plano_id'];
         $totalSessoes = (int) $guideFormValues['total_sessoes'];
         $dataGuia = $conn->real_escape_string($guideFormValues['data'] ?: date('Y-m-d'));
@@ -131,6 +150,8 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
 
         if ($existe) {
             $guideMessage = 'Ja existe uma guia com esse codigo.';
+        } elseif (!app_professional_has_service($conn, $clinicId, $profissionalId, $servicoId)) {
+            $guideMessage = 'O servico selecionado nao esta vinculado ao profissional.';
         } else {
             $check = $conn->query("
                 SELECT COUNT(*) as total
@@ -138,6 +159,7 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
                 WHERE g.clinica_id = {$clinicId}
                 AND g.paciente_id = {$pacienteId}
                 AND g.profissional_id = {$profissionalId}
+                AND g.servico_id = {$servicoId}
                 AND COALESCE(g.status_operacional, 'aguardando_autorizacao') NOT IN ('cancelada', 'finalizada')
                 AND (
                     SELECT COUNT(*) FROM atendimentos a WHERE a.clinica_id = g.clinica_id AND a.guia_id = g.id
@@ -147,40 +169,28 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy
             if ((int) ($check['total'] ?? 0) > 0) {
                 $guideMessage = 'Este paciente ja possui uma guia em aberto para este profissional.';
             } else {
-                $plano = $conn->query("
-                    SELECT nome, valor_sessao
-                    FROM planos
-                    WHERE clinica_id = {$clinicId}
-                    AND id = {$planoId}
-                    LIMIT 1
-                ")->fetch_assoc();
+                $priceData = app_service_price_data_for_guide($conn, $clinicId, $servicoId, $planoId);
+                $valorSessao = (float) ($priceData['valor'] ?? 0);
 
-                $planoNome = (string) ($plano['nome'] ?? '');
-                $valorSessao = (float) ($plano['valor_sessao'] ?? 0);
-                $valorManual = $guideFormValues['valor_guia'];
-
-                if ($planoNome === 'Particular' && trim($valorManual) !== '') {
-                    $valorLimpo = trim(str_replace(['R$', ' '], '', $valorManual));
-                    $valorLimpo = str_contains($valorLimpo, ',')
-                        ? str_replace(',', '.', str_replace('.', '', $valorLimpo))
-                        : $valorLimpo;
-                    $valorGuia = (float) $valorLimpo;
+                if ($valorSessao <= 0) {
+                    $guideMessage = 'Cadastre o preco deste servico para este plano no cadastro de servico.';
                 } else {
-                    $valorGuia = $valorSessao * $totalSessoes;
+                    $valorCalculado = $valorSessao * $totalSessoes;
+                    $valorManual = app_parse_money((string) $guideFormValues['valor_guia']);
+                    $valorGuia = !empty($priceData['permite_alterar_guia']) && $valorManual > 0 ? $valorManual : $valorCalculado;
+                    $statusOperacional = $conn->real_escape_string($guideFormValues['status_operacional']);
+                    $ok = $conn->query("
+                        INSERT INTO guias (clinica_id, codigo, paciente_id, profissional_id, servico_id, plano_id, total_sessoes, data, valor_guia, recebido, autorizada, status_operacional)
+                        VALUES ({$clinicId}, '{$codigoEsc}', {$pacienteId}, {$profissionalId}, {$servicoId}, {$planoId}, {$totalSessoes}, '{$dataGuia}', {$valorGuia}, 0, " . (int) $guideFormValues['autorizada'] . ", '{$statusOperacional}')
+                    ");
+
+                    if ($ok) {
+                        app_flash('success', 'Guia cadastrada com sucesso.');
+                        app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
+                    }
+
+                    $guideMessage = 'Nao foi possivel cadastrar a guia.';
                 }
-
-                $statusOperacional = $conn->real_escape_string($guideFormValues['status_operacional']);
-                $ok = $conn->query("
-                    INSERT INTO guias (clinica_id, codigo, paciente_id, profissional_id, plano_id, total_sessoes, data, valor_guia, recebido, autorizada, status_operacional)
-                    VALUES ({$clinicId}, '{$codigoEsc}', {$pacienteId}, {$profissionalId}, {$planoId}, {$totalSessoes}, '{$dataGuia}', {$valorGuia}, 0, " . (int) $guideFormValues['autorizada'] . ", '{$statusOperacional}')
-                ");
-
-                if ($ok) {
-                    app_flash('success', 'Guia cadastrada com sucesso.');
-                    app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
-                }
-
-                $guideMessage = 'Nao foi possivel cadastrar a guia.';
             }
         }
     }
@@ -199,13 +209,35 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'authorize_l
     if ($guideId <= 0) {
         app_flash('danger', 'Guia nao encontrada.');
     } else {
-        $ok = app_stmt_execute(
+        $guideToAuthorize = app_stmt_one(
             $conn,
-            'UPDATE guias SET autorizada = 1, status_operacional = ? WHERE clinica_id = ? AND id = ?',
-            'sii',
-            ['autorizada', $clinicId, $guideId]
+            'SELECT g.*, COALESCE(a.usadas, 0) AS usadas
+             FROM guias g
+             LEFT JOIN (
+                 SELECT guia_id, COUNT(*) AS usadas
+                 FROM atendimentos
+                 WHERE clinica_id = ?
+                 GROUP BY guia_id
+             ) a ON a.guia_id = g.id
+             WHERE g.clinica_id = ? AND g.id = ?
+             LIMIT 1',
+            'iii',
+            [$clinicId, $clinicId, $guideId]
         );
-        app_flash($ok ? 'success' : 'danger', $ok ? 'Guia autorizada com sucesso.' : 'Nao foi possivel autorizar a guia.');
+
+        if (!$guideToAuthorize) {
+            app_flash('danger', 'Guia nao encontrada.');
+        } elseif (app_legacy_guide_locked_for_edit($guideToAuthorize)) {
+            app_flash('warning', 'Esta guia ja esta em uso ou finalizada e nao pode ser alterada.');
+        } else {
+            $ok = app_stmt_execute(
+                $conn,
+                'UPDATE guias SET autorizada = 1, status_operacional = ? WHERE clinica_id = ? AND id = ?',
+                'sii',
+                ['autorizada', $clinicId, $guideId]
+            );
+            app_flash($ok ? 'success' : 'danger', $ok ? 'Guia autorizada com sucesso.' : 'Nao foi possivel autorizar a guia.');
+        }
     }
 
     app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
@@ -220,6 +252,8 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
     $guideId = app_post_int('guide_id');
     $codigo = trim((string) ($_POST['codigo'] ?? ''));
     $profissionalId = app_post_int('profissional_id');
+    $servicoId = app_post_int('servico_id');
+    $planoId = app_post_int('plano_id');
     $data = (string) ($_POST['data'] ?? date('Y-m-d'));
     $total = app_post_int('total_sessoes');
     $valorManual = (string) ($_POST['valor_guia'] ?? '');
@@ -236,21 +270,35 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 
     $editGuide = app_stmt_one(
         $conn,
-        'SELECT g.*, pl.nome AS plano, pl.valor_sessao
+        'SELECT g.*, pl.nome AS plano, s.nome AS servico_nome,
+                COALESCE(a.usadas, 0) AS usadas
          FROM guias g
          LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+         LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
+         LEFT JOIN (
+             SELECT guia_id, COUNT(*) AS usadas
+             FROM atendimentos
+             WHERE clinica_id = ?
+             GROUP BY guia_id
+         ) a ON a.guia_id = g.id
          WHERE g.clinica_id = ? AND g.id = ?
          LIMIT 1',
-        'ii',
-        [$clinicId, $guideId]
+        'iii',
+        [$clinicId, $clinicId, $guideId]
     );
 
     if (!$editGuide) {
         $editMessage = 'Guia nao encontrada.';
+    } elseif (app_legacy_guide_locked_for_edit($editGuide)) {
+        $editMessage = 'Esta guia ja esta em uso ou finalizada e nao pode ser alterada.';
     } elseif ($codigo === '') {
         $editMessage = 'Informe o codigo da guia.';
     } elseif ($profissionalId <= 0) {
         $editMessage = 'Selecione o profissional.';
+    } elseif ($servicoId <= 0) {
+        $editMessage = 'Selecione o servico.';
+    } elseif ($planoId <= 0) {
+        $editMessage = 'Selecione o plano.';
     } elseif ($total <= 0) {
         $editMessage = 'Quantidade de sessoes deve ser maior que zero.';
     } else {
@@ -258,33 +306,32 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 
         if ($exists) {
             $editMessage = 'Ja existe uma guia com esse codigo.';
+        } elseif (!app_professional_has_service($conn, $clinicId, $profissionalId, $servicoId)) {
+            $editMessage = 'O servico selecionado nao esta vinculado ao profissional.';
         } else {
-            $valorSessao = (float) ($editGuide['valor_sessao'] ?? 0);
-            $planoNome = (string) ($editGuide['plano'] ?? '');
+            $priceData = app_service_price_data_for_guide($conn, $clinicId, $servicoId, $planoId);
+            $valorSessao = (float) ($priceData['valor'] ?? 0);
 
-            if ($planoNome === 'Particular' && trim($valorManual) !== '') {
-                $valorLimpo = trim(str_replace(['R$', ' '], '', $valorManual));
-                $valorLimpo = str_contains($valorLimpo, ',')
-                    ? str_replace(',', '.', str_replace('.', '', $valorLimpo))
-                    : $valorLimpo;
-                $valorGuia = (float) $valorLimpo;
+            if ($valorSessao <= 0) {
+                $editMessage = 'Cadastre o preco deste servico para este plano no cadastro de servico.';
             } else {
-                $valorGuia = $valorSessao * $total;
+                $valorCalculado = $valorSessao * $total;
+                $valorManualParsed = app_parse_money($valorManual);
+                $valorGuia = !empty($priceData['permite_alterar_guia']) && $valorManualParsed > 0 ? $valorManualParsed : $valorCalculado;
+                $ok = app_stmt_execute(
+                    $conn,
+                    'UPDATE guias SET codigo = ?, profissional_id = ?, servico_id = ?, plano_id = ?, data = ?, total_sessoes = ?, valor_guia = ?, autorizada = ?, status_operacional = ? WHERE clinica_id = ? AND id = ?',
+                    'siiisidisii',
+                    [$codigo, $profissionalId, $servicoId, $planoId, $data, $total, $valorGuia, $autorizada, $statusOperacional, $clinicId, $guideId]
+                );
+
+                if ($ok) {
+                    app_flash('success', 'Guia atualizada com sucesso.');
+                    app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
+                }
+
+                $editMessage = 'Nao foi possivel atualizar a guia.';
             }
-
-            $ok = app_stmt_execute(
-                $conn,
-                'UPDATE guias SET codigo = ?, profissional_id = ?, data = ?, total_sessoes = ?, valor_guia = ?, autorizada = ?, status_operacional = ? WHERE clinica_id = ? AND id = ?',
-                'sisidisii',
-                [$codigo, $profissionalId, $data, $total, $valorGuia, $autorizada, $statusOperacional, $clinicId, $guideId]
-            );
-
-            if ($ok) {
-                app_flash('success', 'Guia atualizada com sucesso.');
-                app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
-            }
-
-            $editMessage = 'Nao foi possivel atualizar a guia.';
         }
     }
 
@@ -295,11 +342,12 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 if ($editGuideId > 0 && !$editGuide) {
     $editGuide = app_stmt_one(
         $conn,
-        'SELECT g.*, p.nome AS paciente_nome, pl.nome AS plano, pl.valor_sessao,
+        'SELECT g.*, p.nome AS paciente_nome, pl.nome AS plano, s.nome AS servico_nome,
                 COALESCE(a.usadas, 0) AS usadas
          FROM guias g
          LEFT JOIN pacientes p ON p.id = g.paciente_id AND p.clinica_id = g.clinica_id
          LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+         LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
          LEFT JOIN (
              SELECT guia_id, COUNT(*) AS usadas
              FROM atendimentos
@@ -688,13 +736,13 @@ if ($shouldLoadGuides):
         g.*,
         p.nome as paciente_nome,
         pr.nome as profissional_nome,
-        pl.valor_sessao,
+        s.nome AS servico_nome,
         COALESCE(a.usadas, 0) AS usadas,
         COALESCE(a.glosas, 0) AS glosas
     FROM guias g
     LEFT JOIN pacientes p ON p.id = g.paciente_id AND p.clinica_id = g.clinica_id
     LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
-    LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+    LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
     LEFT JOIN (
         SELECT
             guia_id,
@@ -714,10 +762,9 @@ while ($g = $res->fetch_assoc()):
     $glosas = (int) $g['glosas'];
 
     $faturadas = max(0, $usadas - $glosas);
-    $valorSessao = floatval($g['valor_sessao']);
-    if ($valorSessao <= 0 && (float) $g['valor_guia'] > 0 && (int) $g['total_sessoes'] > 0) {
-        $valorSessao = (float) $g['valor_guia'] / (int) $g['total_sessoes'];
-    }
+    $valorSessao = (float) $g['valor_guia'] > 0 && (int) $g['total_sessoes'] > 0
+        ? (float) $g['valor_guia'] / (int) $g['total_sessoes']
+        : 0;
     $valorFaturado = min((float) $g['valor_guia'], $faturadas * $valorSessao);
     $valorGlosado = $glosas * $valorSessao;
     $saldo = max(0, min((float) $g['valor_guia'], $valorFaturado) - (float) $g['recebido']);
@@ -748,12 +795,22 @@ while ($g = $res->fetch_assoc()):
     $codigoGuia = htmlspecialchars($g['codigo'] ?? '', ENT_QUOTES);
     $editGuideUrl = 'guias.php?' . app_legacy_guide_filter_query($guideFilters, ['edit_id' => (int) $g['id']]);
     $editGuideUrlEsc = htmlspecialchars($editGuideUrl, ENT_QUOTES);
+    $lockedForEdit = app_legacy_guide_locked_for_edit($g);
+    $editButton = $lockedForEdit
+        ? "<span class='btn btn-sm btn-outline-secondary disabled' title='Guia em uso ou finalizada nao pode ser alterada'>Bloqueada</span>"
+        : "<a href='{$editGuideUrlEsc}' class='btn btn-sm btn-outline-primary'>Editar</a>";
+    $deleteButton = $lockedForEdit
+        ? "<span class='btn btn-sm btn-outline-secondary disabled' title='Guia em uso ou finalizada nao pode ser excluida'>Excluir</span>"
+        : "<form method='POST' action='excluir_guia.php' class='d-inline' onsubmit=\"return confirm('Excluir esta guia?')\">
+    <input type='hidden' name='id' value='{$g['id']}'>
+    <button type='submit' class='btn btn-sm btn-outline-danger'>Excluir</button>
+    </form>";
     $badgeAutorizada = (int) ($g['autorizada'] ?? 0) === 1
         ? "<span class='badge-status badge-finalizado'>Sim</span>"
         : "<span class='badge-status badge-finalizando'>Nao</span>";
     $authorizeButton = '';
 
-    if ($canManageLegacyGuides && (int) ($g['autorizada'] ?? 0) !== 1 && $statusGuia !== 'cancelada') {
+    if ($canManageLegacyGuides && !$lockedForEdit && (int) ($g['autorizada'] ?? 0) !== 1 && $statusGuia !== 'cancelada') {
         $authorizeButton = "<form method='POST' class='d-inline'>
     <input type='hidden' name='action' value='authorize_legacy_guide'>
     <input type='hidden' name='guide_id' value='{$g['id']}'>
@@ -795,12 +852,9 @@ while ($g = $res->fetch_assoc()):
     <td class='valor'>" . number_format($saldo, 2, ',', '.') . "</td>
     <td class='acoes'>
     " . ($canManageLegacyGuides
-        ? "<a href='{$editGuideUrlEsc}' class='btn btn-sm btn-outline-primary'>Editar</a>
+        ? "{$editButton}
     {$authorizeButton}
-    <form method='POST' action='excluir_guia.php' class='d-inline' onsubmit=\"return confirm('Excluir esta guia?')\">
-    <input type='hidden' name='id' value='{$g['id']}'>
-    <button type='submit' class='btn btn-sm btn-outline-danger'>Excluir</button>
-    </form>
+    {$deleteButton}
     <button onclick='baixar(this)' class='btn btn-sm btn-outline-success'>Baixar</button>"
         : "<span class='text-muted small'>Somente leitura</span>") . "
     </td>
@@ -879,8 +933,15 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 
 <div class="col-md-6">
+<label class="form-label">Servico</label>
+<select name="servico_id" id="servico" class="form-control" required title="A guia so pode usar servicos vinculados ao profissional selecionado.">
+<option value="">Selecione o profissional</option>
+</select>
+</div>
+
+<div class="col-md-6">
 <label class="form-label">Plano</label>
-<select name="plano_id" id="plano" class="form-control" required title="Escolha o plano para calcular o valor da guia.">
+<select name="plano_id" id="plano" class="form-control" required title="Escolha o plano para localizar o preco do servico.">
 <option value="">Selecione</option>
 </select>
 </div>
@@ -915,8 +976,9 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <div class="col-md-6">
 <label class="form-label">Valor da guia</label>
-<input type="text" name="valor_guia" id="valor_guia" class="form-control readonly" value="<?= app_h($guideFormValues['valor_guia']) ?>"
-       title="Calculado pelo valor da sessao vezes o total. No plano Particular pode ser preenchido manualmente.">
+<input type="text" name="valor_guia" id="valor_guia" class="form-control readonly" value="<?= app_h($guideFormValues['valor_guia']) ?>" readonly
+       title="Calculado pelo preco cadastrado no servico vezes o total de sessoes.">
+<div id="valorGuiaHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
 </div>
 
 <div class="col-md-6 d-flex align-items-end">
@@ -940,6 +1002,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <?php endif; ?>
 
 <?php if ($canManageLegacyGuides && $editGuide): ?>
+<?php $editGuideLocked = app_legacy_guide_locked_for_edit($editGuide); ?>
 <div class="modal fade guide-modal" id="editarGuiaModal" tabindex="-1" aria-labelledby="editarGuiaModalLabel" aria-hidden="true">
 <div class="modal-dialog modal-lg modal-dialog-centered">
 <div class="modal-content">
@@ -955,6 +1018,10 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <div class="alert alert-warning"><?= app_h($editMessage) ?></div>
 <?php endif; ?>
 
+<?php if ($editGuideLocked): ?>
+<div class="alert alert-info">Esta guia ja esta em uso ou finalizada. Os dados ficam somente para consulta.</div>
+<?php endif; ?>
+
 <form method="POST" id="editarGuiaForm" class="guide-form">
 <input type="hidden" name="action" value="update_legacy_guide">
 <input type="hidden" name="guide_id" value="<?= (int) $editGuide['id'] ?>">
@@ -967,6 +1034,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <input type="hidden" name="filter_mes" value="<?= app_h($guideFilters['mes']) ?>">
 <input type="hidden" name="filter_filtrar" value="<?= $shouldLoadGuides ? '1' : '' ?>">
 
+<fieldset <?= $editGuideLocked ? 'disabled' : '' ?>>
 <div class="row g-3">
 <div class="col-md-6">
 <label class="form-label">Paciente</label>
@@ -984,8 +1052,20 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 
 <div class="col-md-6">
+<label class="form-label">Servico</label>
+<select name="servico_id" id="editServico" class="form-control" required title="A guia so pode usar servicos vinculados ao profissional selecionado.">
+<option value="">Selecione o profissional</option>
+</select>
+</div>
+
+<div class="col-md-6">
 <label class="form-label">Plano</label>
-<input class="form-control readonly" value="<?= app_h((string) ($editGuide['plano'] ?? '')) ?>" readonly title="Plano vinculado a esta guia.">
+<select name="plano_id" id="editPlano" class="form-control" required title="Escolha o plano para localizar o preco do servico.">
+<option value="">Selecione</option>
+<?php foreach ($plansForModal as $plan): ?>
+<option value="<?= (int) $plan['id'] ?>" <?= (int) ($editGuide['plano_id'] ?? 0) === (int) $plan['id'] ? 'selected' : '' ?>><?= app_h((string) $plan['nome']) ?></option>
+<?php endforeach; ?>
+</select>
 </div>
 
 <div class="col-md-6">
@@ -1020,7 +1100,8 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <div class="col-md-3">
 <label class="form-label">Valor da guia</label>
-<input type="text" name="valor_guia" id="editValorGuia" class="form-control readonly" value="R$ <?= number_format((float) $editGuide['valor_guia'], 2, ',', '.') ?>" title="Calculado pelo valor da sessao vezes o total. No plano Particular pode ser preenchido manualmente.">
+<input type="text" name="valor_guia" id="editValorGuia" class="form-control readonly" value="R$ <?= number_format((float) $editGuide['valor_guia'], 2, ',', '.') ?>" readonly title="Calculado pelo preco cadastrado no servico vezes o total de sessoes.">
+<div id="editValorGuiaHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
 </div>
 
 <div class="col-md-6 d-flex align-items-end">
@@ -1031,12 +1112,13 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 </div>
 </div>
+</fieldset>
 </form>
 </div>
 <div class="modal-footer">
 <div class="me-auto guide-shortcuts">Atalhos: <strong>Alt+S</strong> salvar | <strong>Esc</strong> cancelar</div>
 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar <span class="small text-muted">(Esc)</span></button>
-<button type="submit" form="editarGuiaForm" class="btn btn-primary px-4">Salvar guia <span class="small">(Alt+S)</span></button>
+<button type="submit" form="editarGuiaForm" class="btn btn-primary px-4" <?= $editGuideLocked ? 'disabled' : '' ?>>Salvar guia <span class="small">(Alt+S)</span></button>
 </div>
 </div>
 </div>
@@ -1294,8 +1376,11 @@ function baixarBlob(blob, filename) {
 }
 
 const plano = document.getElementById('plano');
+const profissional = document.getElementById('profissional');
+const servico = document.getElementById('servico');
 const total = document.getElementById('total');
 const valorGuia = document.getElementById('valor_guia');
+const valorGuiaHelp = document.getElementById('valorGuiaHelp');
 const novaGuiaForm = document.getElementById('novaGuiaForm');
 const pacienteBusca = document.getElementById('pacienteBusca');
 const pacienteId = document.getElementById('paciente_id');
@@ -1304,8 +1389,50 @@ let pacientesAutocomplete = [];
 let guideModalDataLoaded = false;
 const selectedGuideForm = {
     pacienteId: <?= (int) $guideFormValues['paciente_id'] ?>,
-    planoId: <?= (int) $guideFormValues['plano_id'] ?>
+    planoId: <?= (int) $guideFormValues['plano_id'] ?>,
+    servicoId: <?= (int) $guideFormValues['servico_id'] ?>
 };
+
+async function carregarServicosGuia(serviceSelect, professionalId, planId, selectedServiceId = 0, preserveEditableValue = false) {
+    if (!serviceSelect) return;
+
+    serviceSelect.innerHTML = '<option value="">Selecione o profissional</option>';
+
+    if (!professionalId) {
+        calcularValorGuia(preserveEditableValue);
+        return;
+    }
+
+    serviceSelect.innerHTML = '<option value="">Carregando servicos...</option>';
+
+    const params = new URLSearchParams({ profissional_id: String(professionalId) });
+    if (planId) {
+        params.set('plano_id', String(planId));
+    }
+
+    const response = await fetch('buscar_servicos_profissional.php?' + params.toString());
+    const rows = await response.json();
+    serviceSelect.innerHTML = rows.length ? '<option value="">Selecione</option>' : '<option value="">Nenhum servico vinculado</option>';
+
+    rows.forEach((item) => {
+        const option = document.createElement('option');
+        option.value = item.id;
+        const valorServico = parseFloat(item.valor_sessao || 0) || 0;
+        option.textContent = planId && valorServico <= 0 ? item.nome + ' - sem preco cadastrado' : item.nome;
+        option.dataset.valor = item.valor_sessao || 0;
+        option.dataset.permiteAlterarGuia = item.permite_alterar_guia || 0;
+        if (Number(item.id) === Number(selectedServiceId)) {
+            option.selected = true;
+        }
+        serviceSelect.appendChild(option);
+    });
+
+    if (!selectedServiceId && rows.length === 1) {
+        serviceSelect.value = String(rows[0].id);
+    }
+
+    calcularValorGuia(preserveEditableValue);
+}
 
 async function carregarDadosModalGuia() {
     if (guideModalDataLoaded || !plano) return;
@@ -1318,7 +1445,6 @@ async function carregarDadosModalGuia() {
         const option = document.createElement('option');
         option.value = item.id;
         option.textContent = item.nome;
-        option.dataset.valor = item.valor_sessao;
         if (Number(item.id) === selectedGuideForm.planoId) {
             option.selected = true;
         }
@@ -1330,6 +1456,7 @@ async function carregarDadosModalGuia() {
     }
 
     guideModalDataLoaded = true;
+    await carregarServicosGuia(servico, parseInt(profissional?.value || '0', 10) || 0, parseInt(plano?.value || '0', 10) || 0, selectedGuideForm.servicoId);
     calcularValorGuia();
 }
 
@@ -1411,61 +1538,81 @@ function sincronizarPacienteSelecionado() {
     return pacienteId.value !== '';
 }
 
-function calcularValorGuia() {
-    if (!plano || !total || !valorGuia) return;
+function calcularValorGuia(preserveEditableValue = false) {
+    if (!servico || !total || !valorGuia) return;
 
-    let selected = plano.options[plano.selectedIndex];
-    let planoAtual = selected ? selected.text : '';
+    let selected = servico.options[servico.selectedIndex];
     let valorSessao = selected ? parseFloat(selected.getAttribute('data-valor')) || 0 : 0;
+    let permiteAlterar = selected ? selected.dataset.permiteAlterarGuia === '1' : false;
     let totalS = parseInt(total.value || 0);
+    let planId = parseInt(plano?.value || '0', 10) || 0;
+    let semPreco = planId > 0 && !!servico.value && valorSessao <= 0;
 
-    if (planoAtual === 'Particular') {
-        valorGuia.classList.remove('readonly');
-        valorGuia.readOnly = false;
-        return;
-    }
-
-    valorGuia.classList.add('readonly');
-    valorGuia.readOnly = true;
+    valorGuia.classList.toggle('readonly', !permiteAlterar);
+    valorGuia.readOnly = !permiteAlterar;
+    valorGuiaHelp?.classList.toggle('d-none', !semPreco);
 
     let v = valorSessao * totalS;
-    valorGuia.value = v > 0 ? "R$ " + v.toFixed(2).replace('.', ',') : "";
+    if (!(preserveEditableValue && permiteAlterar && valorGuia.value.trim() !== '')) {
+        valorGuia.value = v > 0 ? "R$ " + v.toFixed(2).replace('.', ',') : "";
+    }
 }
 
 if (plano && total && valorGuia) {
-    plano.addEventListener('change', calcularValorGuia);
+    plano.addEventListener('change', () => {
+        carregarServicosGuia(servico, parseInt(profissional?.value || '0', 10) || 0, parseInt(plano.value || '0', 10) || 0, servico?.value || 0);
+    });
+    profissional?.addEventListener('change', () => {
+        carregarServicosGuia(servico, parseInt(profissional.value || '0', 10) || 0, parseInt(plano?.value || '0', 10) || 0);
+    });
+    servico?.addEventListener('change', calcularValorGuia);
     total.addEventListener('input', calcularValorGuia);
     calcularValorGuia();
 }
 
 const editTotal = document.getElementById('editTotal');
 const editValorGuia = document.getElementById('editValorGuia');
+const editValorGuiaHelp = document.getElementById('editValorGuiaHelp');
 const editGuideForm = document.getElementById('editarGuiaForm');
+const editProfissional = document.getElementById('editProfissional');
+const editServico = document.getElementById('editServico');
+const editPlano = document.getElementById('editPlano');
 const editGuideCalc = {
-    plano: <?= json_encode((string) ($editGuide['plano'] ?? '')) ?>,
-    valorSessao: <?= json_encode((float) ($editGuide['valor_sessao'] ?? 0)) ?>
+    planoId: <?= json_encode((int) ($editGuide['plano_id'] ?? 0)) ?>,
+    servicoId: <?= json_encode((int) ($editGuide['servico_id'] ?? 0)) ?>
 };
 
-function calcularValorGuiaEdit() {
-    if (!editTotal || !editValorGuia) return;
+function calcularValorGuiaEdit(preserveEditableValue = false) {
+    if (!editTotal || !editValorGuia || !editServico) return;
 
-    if (editGuideCalc.plano === 'Particular') {
-        editValorGuia.classList.remove('readonly');
-        editValorGuia.readOnly = false;
-        return;
-    }
-
-    editValorGuia.classList.add('readonly');
-    editValorGuia.readOnly = true;
-
+    const selected = editServico.options[editServico.selectedIndex];
+    const valorSessao = selected ? parseFloat(selected.getAttribute('data-valor')) || 0 : 0;
+    const permiteAlterar = selected ? selected.dataset.permiteAlterarGuia === '1' : false;
     const totalS = parseInt(editTotal.value || 0);
-    const v = editGuideCalc.valorSessao * totalS;
-    editValorGuia.value = v > 0 ? "R$ " + v.toFixed(2).replace('.', ',') : "";
+    const v = valorSessao * totalS;
+    const editPlanId = parseInt(editPlano?.value || '0', 10) || 0;
+    const semPreco = editPlanId > 0 && !!editServico.value && valorSessao <= 0;
+    editValorGuia.classList.toggle('readonly', !permiteAlterar);
+    editValorGuia.readOnly = !permiteAlterar;
+    editValorGuiaHelp?.classList.toggle('d-none', !semPreco);
+    if (!(preserveEditableValue && permiteAlterar && editValorGuia.value.trim() !== '')) {
+        editValorGuia.value = v > 0 ? "R$ " + v.toFixed(2).replace('.', ',') : "";
+    }
 }
 
 if (editTotal && editValorGuia) {
     editTotal.addEventListener('input', calcularValorGuiaEdit);
-    calcularValorGuiaEdit();
+    editServico?.addEventListener('change', calcularValorGuiaEdit);
+    editPlano?.addEventListener('change', () => {
+        carregarServicosGuia(editServico, parseInt(editProfissional?.value || '0', 10) || 0, parseInt(editPlano.value || '0', 10) || 0, editServico?.value || 0)
+            .then(calcularValorGuiaEdit);
+    });
+    editProfissional?.addEventListener('change', () => {
+        carregarServicosGuia(editServico, parseInt(editProfissional.value || '0', 10) || 0, parseInt(editPlano?.value || '0', 10) || 0, editGuideCalc.servicoId)
+            .then(calcularValorGuiaEdit);
+    });
+    carregarServicosGuia(editServico, parseInt(editProfissional?.value || '0', 10) || 0, parseInt(editPlano?.value || '0', 10) || editGuideCalc.planoId, editGuideCalc.servicoId, true)
+        .then(() => calcularValorGuiaEdit(true));
 }
 
 if (novaGuiaModal) {

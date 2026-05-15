@@ -65,6 +65,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $result = $scheduleService->updateAvailability(app_post_int('availability_id'), $_POST, $currentUser);
     } elseif ($action === 'delete_availability') {
         $result = $scheduleService->deleteAvailability(app_post_int('availability_id'), $currentUser);
+    } elseif ($action === 'delete_availability_period') {
+        $result = $scheduleService->deleteAvailabilityPeriod($_POST, $currentUser);
     }
 
     app_flash($result['ok'] ? 'success' : 'danger', $result['message']);

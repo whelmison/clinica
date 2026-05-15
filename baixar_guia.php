@@ -44,13 +44,11 @@ $guia = app_stmt_one(
     'SELECT g.id, g.codigo, g.valor_guia, g.recebido, g.total_sessoes, g.data, g.autorizada, g.status_operacional,
             p.nome AS paciente_nome,
             pr.nome AS profissional_nome,
-            pl.valor_sessao,
             COALESCE(a.usadas, 0) AS usadas,
             COALESCE(a.glosas, 0) AS glosas
      FROM guias g
      LEFT JOIN pacientes p ON p.id = g.paciente_id AND p.clinica_id = g.clinica_id
      LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
-     LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
      LEFT JOIN (
         SELECT guia_id,
                COUNT(*) AS usadas,
@@ -73,11 +71,7 @@ if (!$guia) {
 $valorGuia = (float) $guia['valor_guia'];
 $recebido = (float) $guia['recebido'];
 $totalSessoes = max(1, (int) $guia['total_sessoes']);
-$valorSessao = (float) ($guia['valor_sessao'] ?? 0);
-
-if ($valorSessao <= 0 && $valorGuia > 0) {
-    $valorSessao = $valorGuia / $totalSessoes;
-}
+$valorSessao = $valorGuia > 0 ? $valorGuia / $totalSessoes : 0.0;
 
 $usadas = (int) ($guia['usadas'] ?? 0);
 $glosas = (int) ($guia['glosas'] ?? 0);
@@ -119,7 +113,7 @@ if (!in_array($statusGuia, $canReceiveStatuses, true)) {
 }
 
 if ($valorSessaoCents <= 0) {
-    app_flash('warning', 'Informe o valor do atendimento no plano antes de dar baixa na guia.');
+    app_flash('warning', 'Informe o valor do servico na guia antes de dar baixa.');
     app_redirect($returnTo);
 }
 

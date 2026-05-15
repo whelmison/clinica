@@ -48,29 +48,13 @@ final class PlanService
     private function normalize(array $input): array
     {
         $name = trim((string) ($input['nome'] ?? ''));
-        $rawValue = trim((string) ($input['valor_sessao'] ?? ''));
-        $value = $this->normalizeMoney($rawValue);
 
         if ($name === '') {
             throw new InvalidArgumentException('Informe o nome do plano.');
         }
 
-        if ($value <= 0) {
-            throw new InvalidArgumentException('Informe um valor de sessao maior que zero.');
-        }
-
         return [
             'nome' => $name,
-            'valor_sessao' => $value,
         ];
-    }
-
-    private function normalizeMoney(string $value): float
-    {
-        $normalized = str_replace(['R$', ' '], '', $value);
-        $normalized = str_replace('.', '', $normalized);
-        $normalized = str_replace(',', '.', $normalized);
-
-        return is_numeric($normalized) ? round((float) $normalized, 2) : 0.0;
     }
 }

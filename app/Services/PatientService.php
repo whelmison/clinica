@@ -21,6 +21,14 @@ final class PatientService
 
             $data = $this->normalize($input);
 
+            if ($data['cpf'] !== '') {
+                $duplicate = $this->repository->findByDocument($data['cpf'], $patientId);
+
+                if ($duplicate) {
+                    throw new InvalidArgumentException('Ja existe paciente cadastrado com este CPF/CNPJ: ' . (string) $duplicate['nome'] . '.');
+                }
+            }
+
             if ($patientId === null) {
                 $savedId = $this->repository->create($data);
 

@@ -61,7 +61,20 @@ if ($selectedId !== null && !$selectedGuide) {
     ]));
 }
 
-$canEditSelectedGuide = $selectedGuide ? $guideService->canEdit($currentUser, $selectedGuide) : false;
+$selectedGuideLocked = $selectedGuide ? $guideService->isLockedForEdit($selectedGuide) : false;
+$canEditSelectedGuide = $selectedGuide ? ($guideService->canEdit($currentUser, $selectedGuide) && !$selectedGuideLocked) : false;
+
+if ($selectedGuide && $selectedGuideLocked) {
+    app_flash('warning', 'Esta guia ja esta em uso ou finalizada e nao pode ser alterada.');
+    app_redirect('gestao_guias.php?' . app_build_query([
+        'guia_id' => $filterDefaults['guia_id'] ?: null,
+        'paciente_id' => $filterDefaults['paciente_id'] ?: null,
+        'profissional_id' => $scopeProfessionalId ?? ($filterDefaults['profissional_id'] ?: null),
+        'busca' => $filterDefaults['busca'] !== '' ? $filterDefaults['busca'] : null,
+        'status_operacional' => $filterDefaults['status_operacional'] !== '' ? $filterDefaults['status_operacional'] : null,
+        'page' => $page > 1 ? $page : null,
+    ]));
+}
 
 if ($selectedGuide && !$canEditSelectedGuide) {
     app_flash('danger', 'Sem permissao para editar esta guia.');
@@ -79,6 +92,7 @@ $guideFormValues = [
     'guide_id' => (int) ($selectedGuide['id'] ?? 0),
     'paciente_id' => (int) ($selectedGuide['paciente_id'] ?? 0),
     'profissional_id' => (int) ($selectedGuide['profissional_id'] ?? ($scopeProfessionalId ?? 0)),
+    'servico_id' => (int) ($selectedGuide['servico_id'] ?? 0),
     'plano_id' => (int) ($selectedGuide['plano_id'] ?? 0),
     'tipo_guia' => (string) ($selectedGuide['tipo_guia'] ?? $createDefaults['tipo_guia']),
     'data' => (string) ($selectedGuide['data'] ?? $createDefaults['data']),
@@ -116,6 +130,7 @@ if ($requestMethod === 'POST') {
             'guide_id' => $guideId,
             'paciente_id' => app_post_int('paciente_id'),
             'profissional_id' => $scopeProfessionalId ?? app_post_int('profissional_id'),
+            'servico_id' => app_post_int('servico_id'),
             'plano_id' => app_post_int('plano_id'),
             'tipo_guia' => app_request_post('tipo_guia', $createDefaults['tipo_guia']) ?? $createDefaults['tipo_guia'],
             'data' => app_request_post('data', $createDefaults['data']) ?? $createDefaults['data'],
@@ -146,7 +161,8 @@ if ($requestMethod === 'POST') {
 
     if (!$result['ok']) {
         $selectedGuide = $guideFormValues['guide_id'] > 0 ? $guideRepository->find((int) $guideFormValues['guide_id'], $scopeProfessionalId) : null;
-        $canEditSelectedGuide = $selectedGuide ? $guideService->canEdit($currentUser, $selectedGuide) : false;
+        $selectedGuideLocked = $selectedGuide ? $guideService->isLockedForEdit($selectedGuide) : false;
+        $canEditSelectedGuide = $selectedGuide ? ($guideService->canEdit($currentUser, $selectedGuide) && !$selectedGuideLocked) : false;
     }
 }
 

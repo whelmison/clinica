@@ -214,21 +214,23 @@ final class ScheduleService
             }
 
             $lastId = null;
+            $createdCount = 0;
 
             foreach ($entries as $entry) {
-                $data = $this->normalizeAvailability($entry, $user);
-                $lastId = $this->repository->createAvailability($data);
+                $data = $this->normalizeAvailability($entry, $user, null, false);
+                $lastId = $this->repository->mergeAvailabilityRange($data);
+                $createdCount++;
             }
 
             $this->pdo->commit();
 
-            $createdCount = count($entries);
+            $message = $createdCount > 1
+                ? 'Disponibilidade liberada em ' . $createdCount . ' periodo(s).'
+                : 'Disponibilidade liberada com sucesso.';
 
             return [
                 'ok' => true,
-                'message' => $createdCount > 1
-                    ? 'Disponibilidade liberada em ' . $createdCount . ' periodo(s).'
-                    : 'Disponibilidade liberada com sucesso.',
+                'message' => $message,
                 'id' => $lastId,
             ];
         } catch (InvalidArgumentException $exception) {
@@ -276,9 +278,183 @@ final class ScheduleService
             return ['ok' => false, 'message' => 'Seu perfil nao pode excluir esta disponibilidade.'];
         }
 
-        $this->repository->deleteAvailability($availabilityId);
+        try {
+            $this->pdo->beginTransaction();
+            $result = $this->removeAvailabilityKeepingAppointments([
+                'profissional_id' => (int) $existing['profissional_id'],
+                'data_disponivel' => (string) $existing['data_disponivel'],
+                'hora_inicio' => (string) $existing['hora_inicio'],
+                'hora_fim' => (string) $existing['hora_fim'],
+            ]);
+            $this->pdo->commit();
 
-        return ['ok' => true, 'message' => 'Disponibilidade excluida com sucesso.'];
+            if ($result['changed'] <= 0 && $result['protected'] > 0) {
+                return ['ok' => false, 'message' => 'Esta liberacao esta totalmente ocupada por agendamento e nao pode ser excluida.'];
+            }
+
+            if ($result['changed'] <= 0) {
+                return ['ok' => true, 'message' => 'Nenhuma liberacao encontrada para excluir.'];
+            }
+
+            return [
+                'ok' => true,
+                'message' => $result['protected'] > 0
+                    ? 'Liberacao ajustada. Horario com agendamento foi mantido.'
+                    : 'Disponibilidade excluida com sucesso.',
+            ];
+        } catch (Throwable $exception) {
+            $this->rollbackIfNeeded();
+            return ['ok' => false, 'message' => 'Nao foi possivel excluir a disponibilidade.'];
+        }
+    }
+
+    public function deleteAvailabilityPeriod(array $input, array $user): array
+    {
+        if (!$this->canManageAvailability($user, $input)) {
+            return ['ok' => false, 'message' => 'Seu perfil nao pode excluir liberacoes desta agenda.'];
+        }
+
+        try {
+            $entries = $this->expandAvailabilityEntries($input);
+
+            if ($entries === []) {
+                throw new InvalidArgumentException('Selecione pelo menos um dia para excluir a liberacao.');
+            }
+
+            $deletedCount = 0;
+            $protectedWithAppointments = 0;
+
+            $this->pdo->beginTransaction();
+
+            foreach ($entries as $entry) {
+                $data = $this->normalizeAvailability($entry, $user, null, false);
+                $result = $this->removeAvailabilityKeepingAppointments($data);
+
+                $deletedCount += $result['changed'];
+                $protectedWithAppointments += $result['protected'];
+            }
+
+            $this->pdo->commit();
+
+            if ($deletedCount === 0 && $protectedWithAppointments > 0) {
+                return [
+                    'ok' => false,
+                    'message' => 'Nenhuma liberacao foi excluida porque o periodo selecionado esta ocupado por agendamento.',
+                ];
+            }
+
+            if ($deletedCount === 0) {
+                return ['ok' => true, 'message' => 'Nenhuma liberacao encontrada para o periodo selecionado.'];
+            }
+
+            $message = $deletedCount > 1
+                ? 'Liberacao excluida/ajustada em ' . $deletedCount . ' faixa(s).'
+                : 'Liberacao excluida/ajustada com sucesso.';
+
+            if ($protectedWithAppointments > 0) {
+                $message .= ' Horario(s) com agendamento foram mantidos.';
+            }
+
+            return ['ok' => true, 'message' => $message];
+        } catch (InvalidArgumentException $exception) {
+            $this->rollbackIfNeeded();
+            return ['ok' => false, 'message' => $exception->getMessage()];
+        } catch (Throwable $exception) {
+            $this->rollbackIfNeeded();
+            return ['ok' => false, 'message' => 'Nao foi possivel excluir a liberacao.'];
+        }
+    }
+
+    private function removeAvailabilityKeepingAppointments(array $data): array
+    {
+        $professionalId = (int) $data['profissional_id'];
+        $date = (string) $data['data_disponivel'];
+        $start = (string) $data['hora_inicio'];
+        $end = (string) $data['hora_fim'];
+        $appointments = $this->repository->appointmentRangesInRange($professionalId, $date, $start, $end);
+        $removableRanges = $this->removableRangesAroundAppointments($start, $end, $appointments);
+        $changed = 0;
+
+        foreach ($removableRanges as $range) {
+            $changed += $this->repository->removeAvailabilityRange(
+                $professionalId,
+                $date,
+                $range['hora_inicio'],
+                $range['hora_fim']
+            );
+        }
+
+        return [
+            'changed' => $changed,
+            'protected' => count($appointments),
+        ];
+    }
+
+    private function removableRangesAroundAppointments(string $startTime, string $endTime, array $appointments): array
+    {
+        $startTimestamp = strtotime('2000-01-01 ' . $startTime);
+        $endTimestamp = strtotime('2000-01-01 ' . $endTime);
+
+        if ($startTimestamp === false || $endTimestamp === false || $endTimestamp <= $startTimestamp) {
+            return [];
+        }
+
+        $protected = [];
+
+        foreach ($appointments as $appointment) {
+            $appointmentStart = strtotime('2000-01-01 ' . (string) ($appointment['hora_inicio'] ?? ''));
+            $appointmentEnd = strtotime('2000-01-01 ' . (string) ($appointment['hora_fim'] ?? ''));
+
+            if ($appointmentStart === false || $appointmentEnd === false || $appointmentEnd <= $appointmentStart) {
+                continue;
+            }
+
+            $protectedStart = max($startTimestamp, $appointmentStart);
+            $protectedEnd = min($endTimestamp, $appointmentEnd);
+
+            if ($protectedStart < $protectedEnd) {
+                $protected[] = ['start' => $protectedStart, 'end' => $protectedEnd];
+            }
+        }
+
+        if ($protected === []) {
+            return [['hora_inicio' => date('H:i:s', $startTimestamp), 'hora_fim' => date('H:i:s', $endTimestamp)]];
+        }
+
+        usort($protected, static fn (array $left, array $right): int => $left['start'] <=> $right['start']);
+
+        $merged = [];
+        foreach ($protected as $range) {
+            if ($merged === [] || $range['start'] > $merged[count($merged) - 1]['end']) {
+                $merged[] = $range;
+                continue;
+            }
+
+            $merged[count($merged) - 1]['end'] = max($merged[count($merged) - 1]['end'], $range['end']);
+        }
+
+        $removable = [];
+        $cursor = $startTimestamp;
+
+        foreach ($merged as $range) {
+            if ($cursor < $range['start']) {
+                $removable[] = [
+                    'hora_inicio' => date('H:i:s', $cursor),
+                    'hora_fim' => date('H:i:s', $range['start']),
+                ];
+            }
+
+            $cursor = max($cursor, $range['end']);
+        }
+
+        if ($cursor < $endTimestamp) {
+            $removable[] = [
+                'hora_inicio' => date('H:i:s', $cursor),
+                'hora_fim' => date('H:i:s', $endTimestamp),
+            ];
+        }
+
+        return $removable;
     }
 
     public function canManageAppointments(array $user): bool
@@ -362,11 +538,12 @@ final class ScheduleService
             $guideId,
             (int) ($data['cliente_id'] ?? 0),
             (int) ($data['profissional_id'] ?? 0),
+            (int) ($data['servico_id'] ?? 0),
             $ignoreAttendanceId
         );
 
         if (!$guide) {
-            throw new InvalidArgumentException('A guia selecionada nao esta ativa para este paciente/profissional ou ja finalizou.');
+            throw new InvalidArgumentException('A guia selecionada nao esta ativa para este paciente/profissional/servico ou ja finalizou.');
         }
 
         return $guide;
@@ -492,7 +669,7 @@ final class ScheduleService
             . ' (status: ' . $status . ').';
     }
 
-    private function normalizeAvailability(array $input, array $user, ?array $existing = null): array
+    private function normalizeAvailability(array $input, array $user, ?array $existing = null, bool $checkConflict = true): array
     {
         $profile = $user['perfil'] ?? '';
         $professionalId = $profile === 'profissional'
@@ -519,7 +696,7 @@ final class ScheduleService
         $endSql = $endDate->format('H:i:s');
         $ignoreId = $existing ? (int) ($existing['id'] ?? 0) : null;
 
-        if ($this->repository->hasAvailabilityConflict($date, $startSql, $endSql, $professionalId, $ignoreId)) {
+        if ($checkConflict && $this->repository->hasAvailabilityConflict($date, $startSql, $endSql, $professionalId, $ignoreId)) {
             throw new InvalidArgumentException('Ja existe outra liberacao de agenda sobreposta neste horario.');
         }
 
@@ -537,17 +714,20 @@ final class ScheduleService
     {
         $scope = trim((string) ($input['abrangencia'] ?? 'data_unica'));
         $baseDate = trim((string) ($input['data_disponivel'] ?? ''));
+        $endDate = trim((string) ($input['data_final'] ?? ''));
         $monthReference = trim((string) ($input['mes_referencia'] ?? ''));
 
         if ($scope !== 'mes_inteiro' && $baseDate === '') {
-            throw new InvalidArgumentException('Informe a data para liberar a agenda.');
+            throw new InvalidArgumentException('Informe a data inicial para liberar a agenda.');
         }
 
         $range = $this->resolveAvailabilityRange($input);
         $onlyBusinessDays = isset($input['somente_dias_uteis']);
+        $weekdays = $this->availabilityWeekdaySelection($input);
         $dates = match ($scope) {
-            'semana_inteira' => $this->weekDates($baseDate, $onlyBusinessDays),
-            'mes_inteiro' => $this->monthDates($monthReference !== '' ? ($monthReference . '-01') : $baseDate, $onlyBusinessDays),
+            'semana_inteira' => $this->weekDates($baseDate, $onlyBusinessDays, $weekdays),
+            'mes_inteiro' => $this->monthDates($monthReference !== '' ? ($monthReference . '-01') : $baseDate, $onlyBusinessDays, $weekdays),
+            'intervalo_datas' => $this->dateRangeDates($baseDate, $endDate, $onlyBusinessDays, $weekdays),
             default => [$baseDate],
         };
 
@@ -562,6 +742,27 @@ final class ScheduleService
         }
 
         return $entries;
+    }
+
+    private function availabilityWeekdaySelection(array $input): array
+    {
+        $values = $input['dias_semana'] ?? [];
+
+        if (!is_array($values)) {
+            $values = [$values];
+        }
+
+        $days = [];
+
+        foreach ($values as $value) {
+            $day = (int) $value;
+
+            if ($day >= 1 && $day <= 7) {
+                $days[$day] = $day;
+            }
+        }
+
+        return array_values($days);
     }
 
     private function resolveAvailabilityRange(array $input): array
@@ -579,7 +780,7 @@ final class ScheduleService
         };
     }
 
-    private function monthDates(string $baseDate, bool $onlyBusinessDays): array
+    private function monthDates(string $baseDate, bool $onlyBusinessDays, array $weekdays = []): array
     {
         $start = \DateTime::createFromFormat('Y-m-d', date('Y-m-01', strtotime($baseDate)));
         $end = \DateTime::createFromFormat('Y-m-d', date('Y-m-t', strtotime($baseDate)));
@@ -594,7 +795,7 @@ final class ScheduleService
         while ($cursor <= $end) {
             $dayOfWeek = (int) $cursor->format('N');
 
-            if (!$onlyBusinessDays || $dayOfWeek <= 5) {
+            if ($this->availabilityDateMatchesWeekday($dayOfWeek, $onlyBusinessDays, $weekdays)) {
                 $dates[] = $cursor->format('Y-m-d');
             }
 
@@ -604,7 +805,7 @@ final class ScheduleService
         return $dates;
     }
 
-    private function weekDates(string $baseDate, bool $onlyBusinessDays): array
+    private function weekDates(string $baseDate, bool $onlyBusinessDays, array $weekdays = []): array
     {
         $start = \DateTime::createFromFormat('Y-m-d', app_week_start($baseDate));
 
@@ -619,12 +820,50 @@ final class ScheduleService
             $cursor->modify('+' . $i . ' days');
             $dayOfWeek = (int) $cursor->format('N');
 
-            if (!$onlyBusinessDays || $dayOfWeek <= 5) {
+            if ($this->availabilityDateMatchesWeekday($dayOfWeek, $onlyBusinessDays, $weekdays)) {
                 $dates[] = $cursor->format('Y-m-d');
             }
         }
 
         return $dates;
+    }
+
+    private function dateRangeDates(string $startDate, string $endDate, bool $onlyBusinessDays, array $weekdays = []): array
+    {
+        $start = \DateTime::createFromFormat('Y-m-d', $startDate);
+        $end = \DateTime::createFromFormat('Y-m-d', $endDate !== '' ? $endDate : $startDate);
+
+        if (!$start || !$end) {
+            throw new InvalidArgumentException('Informe uma data inicial e final validas.');
+        }
+
+        if ($end < $start) {
+            throw new InvalidArgumentException('A data final deve ser igual ou posterior a data inicial.');
+        }
+
+        $dates = [];
+        $cursor = clone $start;
+
+        while ($cursor <= $end) {
+            $dayOfWeek = (int) $cursor->format('N');
+
+            if ($this->availabilityDateMatchesWeekday($dayOfWeek, $onlyBusinessDays, $weekdays)) {
+                $dates[] = $cursor->format('Y-m-d');
+            }
+
+            $cursor->modify('+1 day');
+        }
+
+        return $dates;
+    }
+
+    private function availabilityDateMatchesWeekday(int $dayOfWeek, bool $onlyBusinessDays, array $weekdays): bool
+    {
+        if ($weekdays !== []) {
+            return in_array($dayOfWeek, $weekdays, true);
+        }
+
+        return !$onlyBusinessDays || $dayOfWeek <= 5;
     }
 
     private function buildProfessionalAgendaMessage(array $professional, array $appointments, string $period, string $startDate, string $endDate): string

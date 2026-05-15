@@ -41,16 +41,15 @@ $resGlosa = $conn->query("
 SELECT 
 g.id as guia_id,
 COUNT(*) as total_glosa,
-pl.valor_sessao
+CASE WHEN COALESCE(g.total_sessoes, 0) > 0 THEN g.valor_guia / g.total_sessoes ELSE 0 END as valor_sessao
 FROM atendimentos a
 LEFT JOIN guias g ON g.id = a.guia_id AND g.clinica_id = a.clinica_id
-LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
 WHERE a.clinica_id = {$clinicId}
 AND a.status_atendimento = 'Glosado'
 AND MONTH(a.data) = '$mes'
 AND YEAR(a.data) = '$ano'
 {$guideScope}
-GROUP BY g.id
+GROUP BY g.id, g.valor_guia, g.total_sessoes
 ");
 
 while($g = $resGlosa->fetch_assoc()){

@@ -22,11 +22,41 @@ final class PatientRepository
         $params = [':clinic_id' => $this->clinicId()];
 
         $patient = trim((string) ($filters['paciente'] ?? ''));
+        $patientId = (int) ($filters['paciente_id'] ?? 0);
+        $patientDigits = preg_replace('/\D+/', '', $patient);
         $plan = trim((string) ($filters['plano'] ?? ''));
 
-        if ($patient !== '') {
-            $where[] = 'p.nome LIKE :paciente';
+        if ($patientId > 0) {
+            $where[] = 'p.id = :paciente_id';
+            $params[':paciente_id'] = $patientId;
+        } elseif ($patient !== '') {
+            $birthDateSql = "DATE_FORMAT(p.data_nascimento, '%d/%m/%Y')";
+            $birthIsoSql = "DATE_FORMAT(p.data_nascimento, '%Y-%m-%d')";
+            $search = [
+                'p.nome LIKE :paciente',
+                $birthDateSql . ' LIKE :paciente_birth_br',
+                $birthIsoSql . ' LIKE :paciente_birth_iso',
+            ];
             $params[':paciente'] = '%' . $patient . '%';
+            $params[':paciente_birth_br'] = '%' . $patient . '%';
+            $params[':paciente_birth_iso'] = '%' . $patient . '%';
+
+            if (strlen($patientDigits) >= 2) {
+                $cpfDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '')";
+                $phoneDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.telefone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '')";
+                $emergencyDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.telefone_emergencia, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '')";
+                $birthDigitsSql = "DATE_FORMAT(p.data_nascimento, '%d%m%Y')";
+                $search[] = $cpfDigitsSql . ' LIKE :paciente_cpf_digits';
+                $search[] = $phoneDigitsSql . ' LIKE :paciente_phone_digits';
+                $search[] = $emergencyDigitsSql . ' LIKE :paciente_emergency_digits';
+                $search[] = $birthDigitsSql . ' LIKE :paciente_birth_digits';
+                $params[':paciente_cpf_digits'] = '%' . $patientDigits . '%';
+                $params[':paciente_phone_digits'] = '%' . $patientDigits . '%';
+                $params[':paciente_emergency_digits'] = '%' . $patientDigits . '%';
+                $params[':paciente_birth_digits'] = '%' . $patientDigits . '%';
+            }
+
+            $where[] = '(' . implode(' OR ', $search) . ')';
         }
 
         if ($plan !== '') {
@@ -128,6 +158,38 @@ final class PatientRepository
              LIMIT 1'
         );
         $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $patientId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
+    }
+
+    public function findByDocument(string $document, ?int $ignorePatientId = null): ?array
+    {
+        $documentDigits = preg_replace('/\D+/', '', $document);
+
+        if ($documentDigits === '') {
+            return null;
+        }
+
+        $documentDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '')";
+        $sql = 'SELECT id, nome, cpf
+                FROM pacientes
+                WHERE clinica_id = :clinic_id
+                  AND ' . $documentDigitsSql . ' = :document_digits';
+        $params = [
+            ':clinic_id' => $this->clinicId(),
+            ':document_digits' => $documentDigits,
+        ];
+
+        if ($ignorePatientId !== null && $ignorePatientId > 0) {
+            $sql .= ' AND id <> :ignore_id';
+            $params[':ignore_id'] = $ignorePatientId;
+        }
+
+        $sql .= ' LIMIT 1';
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
         $row = $stmt->fetch();
 
         return $row ?: null;

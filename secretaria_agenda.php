@@ -140,6 +140,7 @@ foreach ($selectedProfessionalServices as $calendarService) {
             'professional_id' => $selectedProfessionalId,
             'service_id' => $selectedCalendarServiceId,
             'week_start' => $weekStart,
+            'modelo' => app_request_query('modelo', '') === 'rapido' ? 'rapido' : '',
         ]));
     }
 }

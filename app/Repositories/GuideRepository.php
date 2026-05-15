@@ -39,6 +39,7 @@ final class GuideRepository
                        pa.telefone AS paciente_telefone,
                        pr.nome AS profissional_nome,
                        pl.nome AS plano_nome,
+                       s.nome AS servico_nome,
                        l.numero_lote,
                        l.status AS lote_status,
                        COALESCE(att.total_atendimentos, 0) AS total_atendimentos,
@@ -47,6 +48,7 @@ final class GuideRepository
                 LEFT JOIN pacientes pa ON pa.id = g.paciente_id AND pa.clinica_id = g.clinica_id
                 LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
                 LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+                LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
                 LEFT JOIN lotes l ON l.id = g.lote_id AND l.clinica_id = g.clinica_id
                 LEFT JOIN (
                     SELECT guia_id,
@@ -88,12 +90,14 @@ final class GuideRepository
                     pa.telefone AS paciente_telefone,
                     pr.nome AS profissional_nome,
                     pl.nome AS plano_nome,
+                    s.nome AS servico_nome,
                     COALESCE(att.total_atendimentos, 0) AS total_atendimentos,
                     COALESCE(att.total_glosas, 0) AS total_glosas
              FROM guias g
              LEFT JOIN pacientes pa ON pa.id = g.paciente_id AND pa.clinica_id = g.clinica_id
              LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
              LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
+             LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
              LEFT JOIN (
                 SELECT guia_id,
                        COUNT(*) AS total_atendimentos,
@@ -117,7 +121,7 @@ final class GuideRepository
         $clinicId = $this->clinicId();
         $patients = $this->pdo->prepare('SELECT id, nome FROM pacientes WHERE clinica_id = :clinic_id ORDER BY nome');
         $patients->execute([':clinic_id' => $clinicId]);
-        $plans = $this->pdo->prepare('SELECT id, nome, valor_sessao FROM planos WHERE clinica_id = :clinic_id ORDER BY nome');
+        $plans = $this->pdo->prepare('SELECT id, nome FROM planos WHERE clinica_id = :clinic_id ORDER BY nome');
         $plans->execute([':clinic_id' => $clinicId]);
         $batches = $this->pdo->prepare('SELECT id, numero_lote, convenio, status FROM lotes WHERE clinica_id = :clinic_id ORDER BY data DESC, id DESC');
         $batches->execute([':clinic_id' => $clinicId]);
@@ -178,9 +182,9 @@ final class GuideRepository
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO guias
-                (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
+                (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, servico_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
              VALUES
-                (:clinic_id, :codigo, :paciente_id, :plano_id, :total_sessoes, :data, :valor_guia, 0, :profissional_id, :tipo_guia, :lote_id, :convenio, :observacoes, :autorizada, :status_operacional)'
+                (:clinic_id, :codigo, :paciente_id, :plano_id, :total_sessoes, :data, :valor_guia, 0, :profissional_id, :servico_id, :tipo_guia, :lote_id, :convenio, :observacoes, :autorizada, :status_operacional)'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
@@ -191,6 +195,7 @@ final class GuideRepository
             ':data' => $data['data'],
             ':valor_guia' => $data['valor_guia'],
             ':profissional_id' => $data['profissional_id'],
+            ':servico_id' => $data['servico_id'],
             ':tipo_guia' => $data['tipo_guia'],
             ':lote_id' => $data['lote_id'],
             ':convenio' => $data['convenio'],
@@ -213,6 +218,7 @@ final class GuideRepository
                  data = :data,
                  valor_guia = :valor_guia,
                  profissional_id = :profissional_id,
+                 servico_id = :servico_id,
                  tipo_guia = :tipo_guia,
                  lote_id = :lote_id,
                  convenio = :convenio,
@@ -231,6 +237,7 @@ final class GuideRepository
             ':data' => $data['data'],
             ':valor_guia' => $data['valor_guia'],
             ':profissional_id' => $data['profissional_id'],
+            ':servico_id' => $data['servico_id'],
             ':tipo_guia' => $data['tipo_guia'],
             ':lote_id' => $data['lote_id'],
             ':convenio' => $data['convenio'],
@@ -246,12 +253,84 @@ final class GuideRepository
         $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $id]);
     }
 
-    public function planValue(int $planId): float
+    public function professionalHasService(int $professionalId, int $serviceId): bool
     {
-        $stmt = $this->pdo->prepare('SELECT valor_sessao FROM planos WHERE clinica_id = :clinic_id AND id = :id LIMIT 1');
-        $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $planId]);
+        $stmt = $this->pdo->prepare(
+            'SELECT ps.servico_id
+             FROM profissional_servico ps
+             INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
+             WHERE ps.clinica_id = :clinic_id
+               AND ps.profissional_id = :professional_id
+               AND ps.servico_id = :service_id
+               AND s.ativo = 1
+             LIMIT 1'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':service_id' => $serviceId,
+        ]);
 
-        return (float) ($stmt->fetchColumn() ?: 0);
+        return (bool) $stmt->fetchColumn();
+    }
+
+    public function servicePrice(int $serviceId, ?int $planId): float
+    {
+        $price = $this->servicePriceData($serviceId, $planId);
+
+        return (float) ($price['valor'] ?? 0);
+    }
+
+    public function servicePriceData(int $serviceId, ?int $planId): array
+    {
+        if ($planId !== null && $planId > 0) {
+            $stmt = $this->pdo->prepare(
+                'SELECT valor, permite_alterar_guia
+                 FROM servico_precos
+                 WHERE clinica_id = :clinic_id
+                   AND servico_id = :service_id
+                   AND plano_id = :plan_id
+                   AND ativo = 1
+                 ORDER BY id DESC
+                 LIMIT 1'
+            );
+            $stmt->execute([
+                ':clinic_id' => $this->clinicId(),
+                ':service_id' => $serviceId,
+                ':plan_id' => $planId,
+            ]);
+            $row = $stmt->fetch();
+
+            if ($row) {
+                return [
+                    'valor' => (float) ($row['valor'] ?? 0),
+                    'permite_alterar_guia' => (int) ($row['permite_alterar_guia'] ?? 0),
+                ];
+            }
+
+            return ['valor' => 0.0, 'permite_alterar_guia' => 0];
+        }
+
+        $stmt = $this->pdo->prepare(
+            'SELECT valor, permite_alterar_guia
+             FROM servico_precos
+             WHERE clinica_id = :clinic_id
+               AND servico_id = :service_id
+               AND plano_id IS NULL
+               AND ativo = 1
+             ORDER BY id DESC
+             LIMIT 1'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':service_id' => $serviceId,
+        ]);
+        $row = $stmt->fetch();
+
+        return [
+            'valor' => (float) ($row['valor'] ?? 0),
+            'permite_alterar_guia' => (int) ($row['permite_alterar_guia'] ?? 0),
+        ];
     }
 
     public function countAttendances(int $guideId): int

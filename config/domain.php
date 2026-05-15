@@ -1129,9 +1129,82 @@ function app_professional_profile(mysqli $conn, int $professionalId): ?array
     return app_stmt_one($conn, 'SELECT * FROM profissionais WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [app_active_clinic_id(), $professionalId]);
 }
 
-function app_services_for_professional(mysqli $conn, int $professionalId): array
+function app_service_price_data_for_guide(mysqli $conn, int $clinicId, int $serviceId, ?int $planId = null): array
 {
-    return app_stmt_all(
+    if ($serviceId <= 0) {
+        return ['valor' => 0.0, 'permite_alterar_guia' => 0];
+    }
+
+    if ($planId !== null && $planId > 0) {
+        $row = app_stmt_one(
+            $conn,
+            'SELECT valor, permite_alterar_guia
+             FROM servico_precos
+             WHERE clinica_id = ? AND servico_id = ? AND plano_id = ? AND ativo = 1
+             ORDER BY id DESC
+             LIMIT 1',
+            'iii',
+            [$clinicId, $serviceId, $planId]
+        );
+
+        if ($row) {
+            return [
+                'valor' => (float) ($row['valor'] ?? 0),
+                'permite_alterar_guia' => (int) ($row['permite_alterar_guia'] ?? 0),
+            ];
+        }
+
+        return ['valor' => 0.0, 'permite_alterar_guia' => 0];
+    }
+
+    $row = app_stmt_one(
+        $conn,
+        'SELECT valor, permite_alterar_guia
+         FROM servico_precos
+         WHERE clinica_id = ? AND servico_id = ? AND plano_id IS NULL AND ativo = 1
+         ORDER BY id DESC
+         LIMIT 1',
+        'ii',
+        [$clinicId, $serviceId]
+    );
+
+    return [
+        'valor' => (float) ($row['valor'] ?? 0),
+        'permite_alterar_guia' => (int) ($row['permite_alterar_guia'] ?? 0),
+    ];
+}
+
+function app_service_price_for_guide(mysqli $conn, int $clinicId, int $serviceId, ?int $planId = null): float
+{
+    $price = app_service_price_data_for_guide($conn, $clinicId, $serviceId, $planId);
+
+    return (float) ($price['valor'] ?? 0);
+}
+
+function app_professional_has_service(mysqli $conn, int $clinicId, int $professionalId, int $serviceId): bool
+{
+    if ($professionalId <= 0 || $serviceId <= 0) {
+        return false;
+    }
+
+    $row = app_stmt_one(
+        $conn,
+        'SELECT ps.servico_id
+         FROM profissional_servico ps
+         INNER JOIN servicos s ON s.id = ps.servico_id AND s.clinica_id = ps.clinica_id
+         WHERE ps.clinica_id = ? AND ps.profissional_id = ? AND ps.servico_id = ? AND s.ativo = 1
+         LIMIT 1',
+        'iii',
+        [$clinicId, $professionalId, $serviceId]
+    );
+
+    return $row !== null;
+}
+
+function app_services_for_professional(mysqli $conn, int $professionalId, ?int $planId = null): array
+{
+    $clinicId = app_active_clinic_id();
+    $rows = app_stmt_all(
         $conn,
         'SELECT s.id,
                 s.nome,
@@ -1143,15 +1216,25 @@ function app_services_for_professional(mysqli $conn, int $professionalId): array
          WHERE ps.clinica_id = ? AND ps.profissional_id = ? AND s.ativo = 1
          ORDER BY s.nome',
         'ii',
-        [app_active_clinic_id(), $professionalId]
+        [$clinicId, $professionalId]
     );
+
+    foreach ($rows as &$row) {
+        $price = app_service_price_data_for_guide($conn, $clinicId, (int) $row['id'], $planId);
+        $row['valor_sessao'] = (float) ($price['valor'] ?? 0);
+        $row['permite_alterar_guia'] = (int) ($price['permite_alterar_guia'] ?? 0);
+    }
+    unset($row);
+
+    return $rows;
 }
 
 function app_create_guide(mysqli $conn, array $data): array
 {
     $patientId = (int) ($data['paciente_id'] ?? 0);
     $professionalId = (int) ($data['profissional_id'] ?? 0);
-    $planId = !empty($data['plano_id']) ? (int) $data['plano_id'] : null;
+    $serviceId = (int) ($data['servico_id'] ?? 0);
+    $planId = (int) ($data['plano_id'] ?? 0);
     $type = trim((string) ($data['tipo_guia'] ?? ''));
     $date = trim((string) ($data['data'] ?? ''));
     $sessions = max(1, (int) ($data['total_sessoes'] ?? 1));
@@ -1168,6 +1251,14 @@ function app_create_guide(mysqli $conn, array $data): array
 
     if ($professionalId <= 0) {
         return ['ok' => false, 'message' => 'Nao permitir guia sem profissional.'];
+    }
+
+    if ($serviceId <= 0 || !app_professional_has_service($conn, app_active_clinic_id(), $professionalId, $serviceId)) {
+        return ['ok' => false, 'message' => 'Selecione um servico vinculado ao profissional.'];
+    }
+
+    if ($planId <= 0) {
+        return ['ok' => false, 'message' => 'Selecione o plano da guia.'];
     }
 
     if (!array_key_exists($type, app_guide_types())) {
@@ -1189,10 +1280,15 @@ function app_create_guide(mysqli $conn, array $data): array
         return ['ok' => false, 'message' => 'Ja existe uma guia com este codigo.'];
     }
 
-    if ($value <= 0 && $planId !== null) {
-        $plan = app_stmt_one($conn, 'SELECT valor_sessao FROM planos WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [$clinicId, $planId]);
-        $value = ((float) ($plan['valor_sessao'] ?? 0)) * $sessions;
+    $servicePriceData = app_service_price_data_for_guide($conn, $clinicId, $serviceId, $planId);
+    $servicePrice = (float) ($servicePriceData['valor'] ?? 0);
+
+    if ($servicePrice <= 0) {
+        return ['ok' => false, 'message' => 'Cadastre o preco deste servico para este plano no cadastro de servico.'];
     }
+
+    $calculatedValue = $servicePrice * $sessions;
+    $value = !empty($servicePriceData['permite_alterar_guia']) && $value > 0 ? $value : $calculatedValue;
 
     if ($value <= 0) {
         return ['ok' => false, 'message' => 'Informe um valor valido para a guia.'];
@@ -1208,10 +1304,10 @@ function app_create_guide(mysqli $conn, array $data): array
 
     $ok = app_stmt_execute(
         $conn,
-        'INSERT INTO guias (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)',
-        'isiiisdisssis',
-        [$clinicId, $code, $patientId, $planId, $sessions, $date, $value, $professionalId, $type, $convenio, $notes, $authorized, $operationalStatus]
+        'INSERT INTO guias (clinica_id, codigo, paciente_id, plano_id, total_sessoes, data, valor_guia, recebido, profissional_id, servico_id, tipo_guia, lote_id, convenio, observacoes, autorizada, status_operacional)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, ?, ?, ?)',
+        'isiiisdiisssis',
+        [$clinicId, $code, $patientId, $planId, $sessions, $date, $value, $professionalId, $serviceId, $type, $convenio, $notes, $authorized, $operationalStatus]
     );
 
     if (!$ok) {

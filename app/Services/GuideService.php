@@ -52,6 +52,10 @@ final class GuideService
             return ['ok' => false, 'message' => 'Seu perfil nao pode editar esta guia.'];
         }
 
+        if ($this->isLockedForEdit($guide)) {
+            return ['ok' => false, 'message' => 'Esta guia ja esta em uso ou finalizada e nao pode ser alterada.'];
+        }
+
         try {
             $forcedProfessionalId = $this->isProfessionalEditor($user) ? (int) $guide['profissional_id'] : null;
             $data = $this->normalizeData($input, $guideId, $forcedProfessionalId);
@@ -82,6 +86,10 @@ final class GuideService
 
         if (!$guide) {
             return ['ok' => false, 'message' => 'Guia nao encontrada.'];
+        }
+
+        if ($this->isLockedForEdit($guide)) {
+            return ['ok' => false, 'message' => 'Nao e permitido excluir uma guia em uso ou finalizada.'];
         }
 
         if ($this->repository->countAttendances($guideId) > 0) {
@@ -151,6 +159,17 @@ final class GuideService
         return $this->repository->professionalCanEditGuides($professionalId);
     }
 
+    public function isLockedForEdit(array $guide): bool
+    {
+        $usedSessions = (int) ($guide['total_atendimentos'] ?? $guide['usadas'] ?? $guide['sessoes_usadas'] ?? 0);
+
+        if ($usedSessions > 0) {
+            return true;
+        }
+
+        return app_guide_operational_status_data($guide)['value'] === 'finalizada';
+    }
+
     private function isProfessionalEditor(array $user): bool
     {
         return ($user['perfil'] ?? '') === 'profissional' && (int) ($user['profissional_id'] ?? 0) > 0;
@@ -160,7 +179,8 @@ final class GuideService
     {
         $patientId = (int) ($input['paciente_id'] ?? 0);
         $professionalId = $forcedProfessionalId ?? (int) ($input['profissional_id'] ?? 0);
-        $planId = !empty($input['plano_id']) ? (int) $input['plano_id'] : null;
+        $serviceId = (int) ($input['servico_id'] ?? 0);
+        $planId = (int) ($input['plano_id'] ?? 0);
         $date = trim((string) ($input['data'] ?? date('Y-m-d')));
         $totalSessions = max(1, (int) ($input['total_sessoes'] ?? 1));
         $type = trim((string) ($input['tipo_guia'] ?? ''));
@@ -180,6 +200,14 @@ final class GuideService
             throw new InvalidArgumentException('Selecione um profissional valido.');
         }
 
+        if ($serviceId <= 0 || !$this->repository->professionalHasService($professionalId, $serviceId)) {
+            throw new InvalidArgumentException('Selecione um servico vinculado ao profissional.');
+        }
+
+        if ($planId <= 0) {
+            throw new InvalidArgumentException('Selecione o plano da guia.');
+        }
+
         if (!array_key_exists($type, app_guide_types())) {
             throw new InvalidArgumentException('Selecione um tipo de guia valido.');
         }
@@ -196,9 +224,15 @@ final class GuideService
             throw new InvalidArgumentException('Ja existe uma guia com este codigo.');
         }
 
-        if ($planId !== null && $value <= 0) {
-            $value = $this->repository->planValue($planId) * $totalSessions;
+        $servicePriceData = $this->repository->servicePriceData($serviceId, $planId);
+        $servicePrice = (float) ($servicePriceData['valor'] ?? 0);
+
+        if ($servicePrice <= 0) {
+            throw new InvalidArgumentException('Cadastre o preco deste servico para este plano no cadastro de servico.');
         }
+
+        $calculatedValue = $servicePrice * $totalSessions;
+        $value = !empty($servicePriceData['permite_alterar_guia']) && $value > 0 ? $value : $calculatedValue;
 
         if ($value <= 0) {
             throw new InvalidArgumentException('Informe um valor valido para a guia.');
@@ -218,6 +252,7 @@ final class GuideService
             'codigo' => $code,
             'paciente_id' => $patientId,
             'plano_id' => $planId,
+            'servico_id' => $serviceId,
             'total_sessoes' => $totalSessions,
             'data' => $date,
             'valor_guia' => $value,

@@ -15,6 +15,8 @@ const calendarFilterForm = document.getElementById('calendarFilterForm');
 const calendarProfessional = document.getElementById('calendarProfessional');
 const calendarService = document.getElementById('calendarService');
 const calendarServiceField = document.getElementById('calendarServiceField');
+const calendarGroupQuickField = document.getElementById('calendarGroupQuickField');
+const calendarGroupQuick = document.getElementById('calendarGroupQuick');
 const calendarFilterModalElement = document.getElementById('calendarFilterModal');
 const appointmentForm = document.getElementById('appointmentForm');
 const appointmentFormHost = document.getElementById('appointmentFormHost');
@@ -50,8 +52,12 @@ const availabilityScope = document.getElementById('availabilityScope');
 const availabilityPeriod = document.getElementById('availabilityPeriod');
 const availabilityBusinessDaysWrap = document.getElementById('availabilityBusinessDaysWrap');
 const availabilityBusinessDays = document.getElementById('availabilityBusinessDays');
+const availabilityWeekdaysWrap = document.getElementById('availabilityWeekdaysWrap');
+const availabilityWeekdayChecks = document.querySelectorAll('[name="dias_semana[]"]');
 const availabilityDateWrap = document.getElementById('availabilityDateWrap');
 const availabilityDate = document.getElementById('availabilityDate');
+const availabilityEndDateWrap = document.getElementById('availabilityEndDateWrap');
+const availabilityEndDate = document.getElementById('availabilityEndDate');
 const availabilityMonthWrap = document.getElementById('availabilityMonthWrap');
 const availabilityMonth = document.getElementById('availabilityMonth');
 const availabilityStartWrap = document.getElementById('availabilityStartWrap');
@@ -60,6 +66,7 @@ const availabilityEndWrap = document.getElementById('availabilityEndWrap');
 const availabilityEnd = document.getElementById('availabilityEnd');
 const availabilityNotes = document.getElementById('availabilityNotes');
 const availabilitySubmitBtn = document.getElementById('availabilitySubmitBtn');
+const availabilityDeletePeriodBtn = document.getElementById('availabilityDeletePeriodBtn');
 const availabilityDeleteBtn = document.getElementById('availabilityDeleteBtn');
 const availabilityResetBtn = document.getElementById('availabilityResetBtn');
 const patientPreferenceCard = document.getElementById('patientPreferenceCard');
@@ -374,6 +381,26 @@ function setScheduleMode(mode) {
     });
 }
 
+function isRepeatedAvailabilityScope(scopeValue) {
+    return scopeValue === 'mes_inteiro' || scopeValue === 'semana_inteira' || scopeValue === 'intervalo_datas';
+}
+
+function markDefaultAvailabilityWeekdays() {
+    if (!availabilityWeekdayChecks.length) {
+        return;
+    }
+
+    const hasSelectedDay = Array.from(availabilityWeekdayChecks).some((check) => check.checked);
+
+    if (hasSelectedDay) {
+        return;
+    }
+
+    availabilityWeekdayChecks.forEach((check) => {
+        check.checked = ['1', '2', '3', '4', '5'].includes(String(check.value));
+    });
+}
+
 function syncAvailabilityFormMode() {
     if (!availabilityForm || !availabilityPeriod || !availabilityScope) {
         return;
@@ -382,7 +409,8 @@ function syncAvailabilityFormMode() {
     const preset = availabilityPresetRange(availabilityPeriod.value);
     const isCustom = preset === null;
     const isMonthScope = availabilityScope.value === 'mes_inteiro';
-    const isRepeatedScope = availabilityScope.value === 'mes_inteiro' || availabilityScope.value === 'semana_inteira';
+    const isRangeScope = availabilityScope.value === 'intervalo_datas';
+    const isRepeatedScope = isRepeatedAvailabilityScope(availabilityScope.value);
 
     if (availabilityStartWrap) {
         availabilityStartWrap.style.display = isCustom ? '' : 'none';
@@ -396,8 +424,16 @@ function syncAvailabilityFormMode() {
         availabilityBusinessDaysWrap.style.display = isRepeatedScope ? '' : 'none';
     }
 
+    if (availabilityWeekdaysWrap) {
+        availabilityWeekdaysWrap.style.display = isRepeatedScope ? '' : 'none';
+    }
+
     if (availabilityDateWrap) {
         availabilityDateWrap.style.display = isMonthScope ? 'none' : '';
+    }
+
+    if (availabilityEndDateWrap) {
+        availabilityEndDateWrap.style.display = isRangeScope ? '' : 'none';
     }
 
     if (availabilityMonthWrap) {
@@ -421,6 +457,13 @@ function syncAvailabilityFormMode() {
         availabilityDate.required = !isMonthScope;
     }
 
+    if (availabilityEndDate) {
+        availabilityEndDate.required = isRangeScope;
+        if (isRangeScope && !availabilityEndDate.value && availabilityDate && availabilityDate.value) {
+            availabilityEndDate.value = availabilityDate.value;
+        }
+    }
+
     if (availabilityMonth) {
         availabilityMonth.required = isMonthScope;
         if (isMonthScope && !availabilityMonth.value && availabilityDate && availabilityDate.value) {
@@ -430,6 +473,12 @@ function syncAvailabilityFormMode() {
 
     if (availabilityBusinessDays && !isRepeatedScope) {
         availabilityBusinessDays.checked = false;
+    }
+
+    if (!isRepeatedScope) {
+        availabilityWeekdayChecks.forEach((check) => {
+            check.checked = false;
+        });
     }
 }
 
@@ -517,6 +566,8 @@ async function loadAppointmentGuides(patientId, selectedGuideId = '') {
         if (selectedGuideId) {
             appointmentGuide.value = String(selectedGuideId);
         }
+
+        syncAppointmentServiceFromGuide();
     } catch (error) {
         if (requestId === appointmentGuideRequestId) {
             appointmentGuide.innerHTML = '<option value="">Nao foi possivel carregar as guias</option>';
@@ -792,13 +843,19 @@ function resetAvailabilityForm(dateValue = '', startValue = '', endValue = '') {
         availabilityDate.value = dateValue;
     }
 
+    if (availabilityEndDate) {
+        availabilityEndDate.value = dateValue || availabilityDate?.value || '';
+    }
+
     if (availabilityMonth) {
         availabilityMonth.value = (dateValue || (availabilityDate ? availabilityDate.value : '') || '<?= app_h(substr($reportReferenceDate, 0, 7)) ?>').slice(0, 7);
     }
 
     if (availabilityBusinessDays && availabilityScope) {
-        availabilityBusinessDays.checked = availabilityScope.value === 'mes_inteiro';
+        availabilityBusinessDays.checked = isRepeatedAvailabilityScope(availabilityScope.value);
     }
+
+    markDefaultAvailabilityWeekdays();
 
     const preset = availabilityPresetRange(availabilityPeriod ? availabilityPeriod.value : 'personalizado');
 
@@ -897,6 +954,10 @@ function fillAvailabilityForm(data) {
 
     if (availabilityDate) {
         availabilityDate.value = data.data_disponivel || '';
+    }
+
+    if (availabilityEndDate) {
+        availabilityEndDate.value = data.data_disponivel || '';
     }
 
     if (availabilityMonth) {
@@ -1280,6 +1341,7 @@ if (appointmentStatus) {
 if (appointmentGuide) {
     appointmentGuide.addEventListener('change', () => {
         appointmentGuide.dataset.selectedGuideId = appointmentGuide.value || '';
+        syncAppointmentServiceFromGuide();
     });
 }
 
@@ -1340,8 +1402,9 @@ if (calendarShell) {
 if (availabilityScope) {
     availabilityScope.addEventListener('change', () => {
         if (availabilityBusinessDays) {
-            availabilityBusinessDays.checked = availabilityScope.value === 'mes_inteiro';
+            availabilityBusinessDays.checked = isRepeatedAvailabilityScope(availabilityScope.value);
         }
+        markDefaultAvailabilityWeekdays();
         syncAvailabilityFormMode();
     });
 }
@@ -1415,12 +1478,36 @@ function syncCalendarServiceVisibility() {
     }
 
     calendarServiceField.style.display = shouldShow ? '' : 'none';
+
+    if (calendarGroupQuickField) {
+        const selected = calendarService.selectedOptions?.[0];
+        const selectedIsGroup = (selected?.dataset.tipo || 'individual') === 'grupo';
+        calendarGroupQuickField.style.display = groupOptions.length > 0 && selectedIsGroup ? '' : 'none';
+    }
+}
+
+function syncAppointmentServiceFromGuide() {
+    if (!appointmentGuide || !appointmentService || !appointmentGuide.value) {
+        return;
+    }
+
+    const selectedOption = appointmentGuide.options[appointmentGuide.selectedIndex];
+    const guideServiceId = parseInt(selectedOption?.dataset?.servicoId || '0', 10) || 0;
+
+    if (guideServiceId > 0 && appointmentService.querySelector(`option[value="${guideServiceId}"]`)) {
+        appointmentService.value = String(guideServiceId);
+        updateAppointmentModalCopy();
+    }
 }
 
 if (calendarProfessional && calendarService && !calendarProfessional.disabled) {
     calendarProfessional.addEventListener('change', () => {
         updateCalendarServiceOptions(calendarProfessional.value);
     });
+}
+
+if (calendarService) {
+    calendarService.addEventListener('change', syncCalendarServiceVisibility);
 }
 
 if (calendarFilterForm && calendarService) {
@@ -1430,6 +1517,10 @@ if (calendarFilterForm && calendarService) {
         calendarFilterForm.action = scheduleType === 'grupo'
             ? 'secretaria_agenda_grupo.php'
             : 'secretaria_agenda.php';
+
+        if (scheduleType === 'grupo' && calendarGroupQuick && calendarGroupQuick.checked) {
+            calendarGroupQuick.disabled = false;
+        }
     });
 }
 
@@ -1488,6 +1579,18 @@ if (availabilityDeleteBtn && availabilityForm) {
 
         if (window.confirm('Excluir esta faixa de disponibilidade?')) {
             availabilityAction.value = 'delete_availability';
+            availabilityForm.submit();
+        }
+    });
+}
+
+if (availabilityDeletePeriodBtn && availabilityForm) {
+    availabilityDeletePeriodBtn.addEventListener('click', () => {
+        const scopeLabel = availabilityScope?.selectedOptions?.[0]?.textContent || 'periodo selecionado';
+        const periodLabel = availabilityPeriod?.selectedOptions?.[0]?.textContent || 'horario selecionado';
+
+        if (window.confirm(`Excluir liberacao de agenda para ${scopeLabel.toLowerCase()} / ${periodLabel.toLowerCase()}? Onde houver agendamento, a liberacao sera mantida.`)) {
+            availabilityAction.value = 'delete_availability_period';
             availabilityForm.submit();
         }
     });

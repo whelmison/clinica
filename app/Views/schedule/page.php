@@ -36,6 +36,17 @@ $showCalendarFilterModal = $showCalendarFilterModal ?? false;
 $calendarFilterServices = $calendarFilterServices ?? $selectedProfessionalServices;
 $selectedCalendarServiceId = (int) ($selectedCalendarServiceId ?? 0);
 $showCalendarServiceSelect = $showCalendarServiceSelect ?? (count($calendarFilterServices) > 1);
+$hasCalendarGroupServices = array_values(array_filter(
+    $calendarFilterServices,
+    static fn (array $service): bool => ($service['tipo_agendamento'] ?? 'individual') === 'grupo'
+)) !== [];
+$selectedCalendarServiceIsGroup = false;
+foreach ($calendarFilterServices as $calendarFilterService) {
+    if ((int) ($calendarFilterService['id'] ?? 0) === $selectedCalendarServiceId) {
+        $selectedCalendarServiceIsGroup = ($calendarFilterService['tipo_agendamento'] ?? 'individual') === 'grupo';
+        break;
+    }
+}
 $showOperationPanel = $showOperationPanel ?? true;
 $appointmentModalHighlightSubtitle = $appointmentModalHighlightSubtitle ?? false;
 $appointmentUnavailableMessage = $appointmentUnavailableMessage ?? 'Este horario ainda nao foi liberado para agendamento.';
@@ -54,6 +65,7 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
     'professional_id' => $selectedProfessionalId,
     'week_start' => date('Y-m-d', strtotime($weekStart . ' +7 days')),
 ]));
+$bodyClass = $hasAvailabilityOperation && !$hasAppointmentOperation ? 'agenda-availability-page' : 'agenda-schedule-page';
 ?>
 <!DOCTYPE html>
 <html>
@@ -64,7 +76,7 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
 <link href="assets/clinic-modern.css" rel="stylesheet">
 <link href="assets/schedule-page.css" rel="stylesheet">
 </head>
-<body>
+<body class="<?= app_h($bodyClass) ?>">
 
 <?php include 'partials/menu.php'; ?>
 <?php $scheduleFlash = $flash ?? null; ?>
@@ -312,10 +324,11 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
                             <label for="availabilityScope">Abrangencia</label>
                             <select name="abrangencia" id="availabilityScope" class="form-select">
                                 <option value="data_unica">Somente esta data</option>
+                                <option value="intervalo_datas">Intervalo de datas</option>
                                 <option value="semana_inteira">Semana inteira</option>
                                 <option value="mes_inteiro">Mes inteiro</option>
                             </select>
-                            <div class="agenda-helper-note">Use a data base para um dia, uma semana inteira ou um mes inteiro.</div>
+                            <div class="agenda-helper-note">Use uma data, um intervalo, uma semana ou um mes inteiro.</div>
                         </div>
 
                         <div>
@@ -331,14 +344,32 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
 
                         <div class="full" id="availabilityBusinessDaysWrap" style="display:none;">
                             <label class="agenda-inline-check" for="availabilityBusinessDays">
-                                <input type="checkbox" name="somente_dias_uteis" id="availabilityBusinessDays">
-                                <span>Ao repetir, liberar somente dias uteis</span>
+                                <input type="checkbox" name="somente_dias_uteis" id="availabilityBusinessDays" checked>
+                                <span>Ao repetir, liberar somente dias uteis quando nenhum dia especifico estiver marcado</span>
                             </label>
                         </div>
 
+                        <div class="full" id="availabilityWeekdaysWrap" style="display:none;">
+                            <label>Dias da semana</label>
+                            <div class="agenda-weekday-options">
+                                <?php foreach ([1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'] as $dayValue => $dayLabel): ?>
+                                    <label class="agenda-weekday-option">
+                                        <input type="checkbox" name="dias_semana[]" value="<?= (int) $dayValue ?>" <?= $dayValue <= 5 ? 'checked' : '' ?>>
+                                        <span><?= app_h($dayLabel) ?></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                            <div class="agenda-helper-note">Opcional. Para liberar terca, quinta e sexta no mes, marque Ter, Qui e Sex.</div>
+                        </div>
+
                         <div id="availabilityDateWrap">
-                            <label for="availabilityDate">Data base</label>
+                            <label for="availabilityDate">Data inicial</label>
                             <input type="date" name="data_disponivel" id="availabilityDate" class="form-control" value="<?= app_h((string) ($selectedAvailability['data_disponivel'] ?? $weekStart)) ?>" required>
+                        </div>
+
+                        <div id="availabilityEndDateWrap" style="display:none;">
+                            <label for="availabilityEndDate">Data final</label>
+                            <input type="date" name="data_final" id="availabilityEndDate" class="form-control" value="<?= app_h((string) ($selectedAvailability['data_disponivel'] ?? $weekEnd ?? $weekStart)) ?>">
                         </div>
 
                         <div id="availabilityMonthWrap" style="display:none;">
@@ -368,6 +399,7 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
 
                         <div class="full agenda-actions">
                             <button class="btn btn-outline-secondary" type="button" id="availabilityResetBtn">Nova faixa</button>
+                            <button class="btn btn-outline-danger" type="button" id="availabilityDeletePeriodBtn">Excluir periodo</button>
                             <button class="btn btn-outline-danger" type="button" id="availabilityDeleteBtn" style="display: <?= $selectedAvailability ? 'inline-flex' : 'none' ?>;">Excluir</button>
                             <button class="btn btn-primary" type="submit" id="availabilitySubmitBtn"><?= $selectedAvailability ? 'Atualizar' : 'Liberar' ?></button>
                         </div>
@@ -506,6 +538,13 @@ $calendarNextUrl = app_current_page() . '?' . app_build_query(array_merge($calen
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                    </div>
+                    <div class="agenda-toolbar-field" id="calendarGroupQuickField" <?= $hasCalendarGroupServices && ($selectedCalendarServiceId <= 0 || $selectedCalendarServiceIsGroup) ? '' : 'style="display:none;"' ?>>
+                        <label for="calendarGroupQuick">Modelo de grupo</label>
+                        <label class="form-check d-flex align-items-center gap-2 mb-0" style="min-height:38px;">
+                            <input class="form-check-input mt-0" type="checkbox" name="modelo" id="calendarGroupQuick" value="rapido" checked>
+                            <span class="form-check-label small">Cronograma rapido</span>
+                        </label>
                     </div>
                     <div class="agenda-toolbar-field">
                         <label for="calendarWeekStart">Semana</label>

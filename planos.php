@@ -13,7 +13,6 @@ $planFilters = [
 ];
 $formValues = [
     'nome' => '',
-    'valor_sessao' => '',
 ];
 $autoOpenCreateModal = false;
 
@@ -21,7 +20,6 @@ if (app_request_method() === 'POST') {
     $action = app_request_post('action', '') ?? '';
     $formValues = [
         'nome' => app_request_post('nome', '') ?? '',
-        'valor_sessao' => app_request_post('valor_sessao', '') ?? '',
     ];
 
     if ($action === 'save_plan') {

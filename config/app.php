@@ -856,6 +856,20 @@ function app_install_schema(mysqli $conn): void
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
+    $conn->query('CREATE TABLE IF NOT EXISTS servico_precos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        servico_id INT NOT NULL,
+        plano_id INT NULL,
+        forma_pagamento VARCHAR(80) NOT NULL DEFAULT \'Tabela\',
+        valor DECIMAL(10,2) NOT NULL DEFAULT 0,
+        ativo TINYINT(1) NOT NULL DEFAULT 1,
+        permite_alterar_guia TINYINT(1) NOT NULL DEFAULT 0,
+        observacoes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
     $conn->query('CREATE TABLE IF NOT EXISTS profissional_servico (
         profissional_id INT NOT NULL,
         servico_id INT NOT NULL,
@@ -874,6 +888,7 @@ function app_install_schema(mysqli $conn): void
         recebido DECIMAL(10,2) NOT NULL DEFAULT 0,
         sessoes_usadas INT NOT NULL DEFAULT 0,
         profissional_id INT NULL,
+        servico_id INT NULL,
         tipo_guia VARCHAR(30) NULL,
         lote_id INT NULL,
         convenio VARCHAR(120) NULL,
@@ -1091,6 +1106,15 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'profissionais', 'mensagem_padrao_whatsapp', 'TEXT NULL');
     app_ensure_column($conn, 'servicos', 'tipo_agendamento', 'VARCHAR(20) NOT NULL DEFAULT \'individual\'');
     app_ensure_column($conn, 'servicos', 'capacidade_agendamento', 'INT NOT NULL DEFAULT 1');
+    app_ensure_column($conn, 'servico_precos', 'clinica_id', 'INT NOT NULL DEFAULT 1');
+    app_ensure_column($conn, 'servico_precos', 'servico_id', 'INT NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'servico_precos', 'plano_id', 'INT NULL');
+    app_ensure_column($conn, 'servico_precos', 'forma_pagamento', 'VARCHAR(80) NOT NULL DEFAULT \'Tabela\'');
+    app_ensure_column($conn, 'servico_precos', 'valor', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'servico_precos', 'ativo', 'TINYINT(1) NOT NULL DEFAULT 1');
+    app_ensure_column($conn, 'servico_precos', 'permite_alterar_guia', 'TINYINT(1) NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'servico_precos', 'observacoes', 'TEXT NULL');
+    app_ensure_column($conn, 'servico_precos', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
     $hadGuideAuthorizationColumn = app_column_exists($conn, 'guias', 'autorizada');
     $hadGuideOperationalStatusColumn = app_column_exists($conn, 'guias', 'status_operacional');
@@ -1104,6 +1128,7 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'guias', 'recebido', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'guias', 'sessoes_usadas', 'INT NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'guias', 'profissional_id', 'INT NULL');
+    app_ensure_column($conn, 'guias', 'servico_id', 'INT NULL');
     app_ensure_column($conn, 'guias', 'tipo_guia', 'VARCHAR(30) NULL');
     app_ensure_column($conn, 'guias', 'lote_id', 'INT NULL');
     app_ensure_column($conn, 'guias', 'convenio', 'VARCHAR(120) NULL');
@@ -1180,6 +1205,7 @@ function app_install_schema(mysqli $conn): void
 
     app_ensure_index($conn, 'guias', 'idx_guias_paciente', 'CREATE INDEX idx_guias_paciente ON guias (paciente_id)');
     app_ensure_index($conn, 'guias', 'idx_guias_profissional', 'CREATE INDEX idx_guias_profissional ON guias (profissional_id)');
+    app_ensure_index($conn, 'guias', 'idx_guias_servico', 'CREATE INDEX idx_guias_servico ON guias (servico_id)');
     app_ensure_index($conn, 'guias', 'idx_guias_lote', 'CREATE INDEX idx_guias_lote ON guias (lote_id)');
     app_ensure_index($conn, 'atendimentos', 'idx_atendimentos_guia', 'CREATE INDEX idx_atendimentos_guia ON atendimentos (guia_id)');
     app_ensure_index($conn, 'atendimentos', 'idx_atendimentos_agenda', 'CREATE UNIQUE INDEX idx_atendimentos_agenda ON atendimentos (agenda_id)');
@@ -1191,6 +1217,8 @@ function app_install_schema(mysqli $conn): void
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_grupo', 'CREATE INDEX idx_agenda_grupo_pacientes_grupo ON agenda_grupo_pacientes (grupo_id)');
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'uq_agenda_grupo_paciente', 'CREATE UNIQUE INDEX uq_agenda_grupo_paciente ON agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id)');
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_atendimento', 'CREATE INDEX idx_agenda_grupo_pacientes_atendimento ON agenda_grupo_pacientes (atendimento_id)');
+    app_ensure_index($conn, 'servico_precos', 'idx_servico_precos_servico', 'CREATE INDEX idx_servico_precos_servico ON servico_precos (clinica_id, servico_id)');
+    app_ensure_index($conn, 'servico_precos', 'idx_servico_precos_plano', 'CREATE INDEX idx_servico_precos_plano ON servico_precos (clinica_id, plano_id)');
     app_ensure_index($conn, 'paciente_fichas_avaliacao', 'idx_fichas_avaliacao_paciente', 'CREATE INDEX idx_fichas_avaliacao_paciente ON paciente_fichas_avaliacao (clinica_id, paciente_id, data_avaliacao)');
     app_ensure_index($conn, 'paciente_fichas_evolucao', 'idx_fichas_evolucao_paciente', 'CREATE INDEX idx_fichas_evolucao_paciente ON paciente_fichas_evolucao (clinica_id, paciente_id, data_evolucao)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_tipo_nome', 'CREATE INDEX idx_plano_contas_tipo_nome ON plano_contas (tipo, nome)');

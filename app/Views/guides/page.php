@@ -600,10 +600,10 @@ body {
                                 }
                             }
                             ?>
-                            <input type="hidden" name="profissional_id" value="<?= (int) $scopeProfessionalId ?>">
+                            <input type="hidden" name="profissional_id" id="guideProfessionalField" value="<?= (int) $scopeProfessionalId ?>">
                             <input type="text" class="form-control" value="<?= app_h($scopeProfessionalName) ?>" disabled>
                         <?php else: ?>
-                            <select name="profissional_id" class="form-select" required>
+                            <select name="profissional_id" id="guideProfessionalField" class="form-select" required>
                                 <option value="">Selecione</option>
                                 <?php foreach ($guideOptions['professionals'] as $professional): ?>
                                     <option value="<?= (int) $professional['id'] ?>" <?= (int) ($guideFormValues['profissional_id'] ?? 0) === (int) $professional['id'] ? 'selected' : '' ?>>
@@ -614,10 +614,17 @@ body {
                         <?php endif; ?>
                     </div>
 
+                    <div class="col-md-6">
+                        <label class="form-label">Servico</label>
+                        <select name="servico_id" id="guideServiceField" class="form-select" required title="Mostra apenas os servicos vinculados ao profissional selecionado.">
+                            <option value="">Selecione o profissional</option>
+                        </select>
+                    </div>
+
                     <div class="col-md-3">
                         <label class="form-label">Plano</label>
-                        <select name="plano_id" class="form-select">
-                            <option value="">Sem plano</option>
+                        <select name="plano_id" id="guidePlanField" class="form-select" required>
+                            <option value="">Selecione</option>
                             <?php foreach ($guideOptions['plans'] as $plan): ?>
                                 <option value="<?= (int) $plan['id'] ?>" <?= (int) ($guideFormValues['plano_id'] ?? 0) === (int) $plan['id'] ? 'selected' : '' ?>>
                                     <?= app_h($plan['nome']) ?>
@@ -644,7 +651,7 @@ body {
 
                     <div class="col-md-3">
                         <label class="form-label">Sessoes</label>
-                        <input type="number" name="total_sessoes" class="form-control" min="1" value="<?= (int) ($guideFormValues['total_sessoes'] ?? 1) ?>" required>
+                        <input type="number" name="total_sessoes" id="guideSessionsField" class="form-control" min="1" value="<?= (int) ($guideFormValues['total_sessoes'] ?? 1) ?>" required>
                     </div>
 
                     <div class="col-md-4">
@@ -654,7 +661,8 @@ body {
 
                     <div class="col-md-4">
                         <label class="form-label">Valor</label>
-                        <input type="text" name="valor_guia" class="form-control" value="<?= app_h((string) ($guideFormValues['valor_guia'] ?? '')) ?>" placeholder="R$ 0,00">
+                        <input type="text" name="valor_guia" id="guideValueField" class="form-control" value="<?= app_h((string) ($guideFormValues['valor_guia'] ?? '')) ?>" placeholder="R$ 0,00" readonly>
+                        <div id="guideValueHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
                     </div>
 
                     <div class="col-md-4">
@@ -738,6 +746,14 @@ const guideListPanel = document.querySelector('.guide-list-panel');
 const guideTypeField = document.getElementById('guideTypeField');
 const guideBatchField = document.getElementById('guideBatchField');
 const guideBatchHelp = document.getElementById('guideBatchHelp');
+const guideProfessionalField = document.getElementById('guideProfessionalField');
+const guideServiceField = document.getElementById('guideServiceField');
+const guidePlanField = document.getElementById('guidePlanField');
+const guideSessionsField = document.getElementById('guideSessionsField');
+const guideValueField = document.getElementById('guideValueField');
+const guideValueHelp = document.getElementById('guideValueHelp');
+const selectedGuideServiceId = <?= (int) ($guideFormValues['servico_id'] ?? 0) ?>;
+const isEditingGuideForm = <?= $isEditingGuide ? 'true' : 'false' ?>;
 let guideFilterTimer = null;
 
 async function refreshGuides() {
@@ -765,6 +781,84 @@ async function refreshGuides() {
     } finally {
         guideListPanel?.classList.remove('is-loading');
     }
+}
+
+function guideFormatMoney(value) {
+    return value > 0 ? 'R$ ' + value.toFixed(2).replace('.', ',') : '';
+}
+
+function guideSelectedProfessionalId() {
+    return parseInt(guideProfessionalField?.value || '0', 10) || 0;
+}
+
+function guideSelectedPlanId() {
+    return parseInt(guidePlanField?.value || '0', 10) || 0;
+}
+
+function syncGuideValue(preserveEditableValue = false) {
+    if (!guideServiceField || !guideSessionsField || !guideValueField) {
+        return;
+    }
+
+    const selected = guideServiceField.options[guideServiceField.selectedIndex];
+    const sessionValue = selected ? parseFloat(selected.dataset.valor || '0') || 0 : 0;
+    const canEditValue = selected ? selected.dataset.permiteAlterarGuia === '1' : false;
+    const sessions = parseInt(guideSessionsField.value || '0', 10) || 0;
+    const total = sessionValue * sessions;
+    const planId = guideSelectedPlanId();
+    const missingPrice = planId > 0 && !!guideServiceField.value && sessionValue <= 0;
+    guideValueField.readOnly = !canEditValue;
+    guideValueField.classList.toggle('readonly', !canEditValue);
+    guideValueHelp?.classList.toggle('d-none', !missingPrice);
+    if (!(preserveEditableValue && canEditValue && guideValueField.value.trim() !== '')) {
+        guideValueField.value = guideFormatMoney(total);
+    }
+}
+
+async function loadGuideServices(selectedId = 0, preserveEditableValue = false) {
+    if (!guideServiceField) {
+        return;
+    }
+
+    const professionalId = guideSelectedProfessionalId();
+    const planId = guideSelectedPlanId();
+
+    guideServiceField.innerHTML = professionalId > 0
+        ? '<option value="">Carregando servicos...</option>'
+        : '<option value="">Selecione o profissional</option>';
+
+    if (professionalId <= 0) {
+        syncGuideValue(preserveEditableValue);
+        return;
+    }
+
+    const params = new URLSearchParams({ profissional_id: String(professionalId) });
+    if (planId > 0) {
+        params.set('plano_id', String(planId));
+    }
+
+    const response = await fetch('buscar_servicos_profissional.php?' + params.toString());
+    const rows = await response.json();
+    guideServiceField.innerHTML = rows.length ? '<option value="">Selecione</option>' : '<option value="">Nenhum servico vinculado</option>';
+
+    rows.forEach((service) => {
+        const option = document.createElement('option');
+        option.value = service.id;
+        const serviceValue = parseFloat(service.valor_sessao || 0) || 0;
+        option.textContent = planId > 0 && serviceValue <= 0 ? service.nome + ' - sem preco cadastrado' : service.nome;
+        option.dataset.valor = service.valor_sessao || 0;
+        option.dataset.permiteAlterarGuia = service.permite_alterar_guia || 0;
+        if (Number(service.id) === Number(selectedId)) {
+            option.selected = true;
+        }
+        guideServiceField.appendChild(option);
+    });
+
+    if (!selectedId && rows.length === 1) {
+        guideServiceField.value = String(rows[0].id);
+    }
+
+    syncGuideValue(preserveEditableValue);
 }
 
 function syncGuideBatchField() {
@@ -810,6 +904,11 @@ guideFilterForm.querySelectorAll('select, input').forEach((field) => {
 
 guideTypeField?.addEventListener('change', syncGuideBatchField);
 syncGuideBatchField();
+guideProfessionalField?.addEventListener('change', () => loadGuideServices());
+guidePlanField?.addEventListener('change', () => loadGuideServices(guideServiceField?.value || 0));
+guideServiceField?.addEventListener('change', syncGuideValue);
+guideSessionsField?.addEventListener('input', syncGuideValue);
+loadGuideServices(selectedGuideServiceId, isEditingGuideForm);
 </script>
 
 <?php if (!empty($autoOpenGuideModal) && ($canCreateGuides || $isEditingGuide)): ?>

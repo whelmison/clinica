@@ -70,7 +70,7 @@ body {
             <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-end">
                 <div>
                     <h3 class="mb-2">Editar plano</h3>
-                    <p>Ajuste o nome e o valor padrao da sessao com o mesmo padrao visual das telas novas do sistema.</p>
+                    <p>Ajuste o nome do plano usado para vincular os precos dentro do cadastro de servicos.</p>
                 </div>
                 <a href="planos.php" class="btn btn-light btn-sm rounded-pill px-3">Voltar a lista</a>
             </div>
@@ -82,20 +82,16 @@ body {
                     <div class="card-header">
                         <div class="panel-title">
                             <h5>Dados do plano</h5>
-                            <span class="text-muted small"><?= app_money_br((float) ($selectedPlan['valor_sessao'] ?? 0)) ?></span>
+                            <span class="text-muted small">Precos nos servicos</span>
                         </div>
                     </div>
                     <div class="card-body">
                         <form method="POST" class="plan-edit-form">
                             <input type="hidden" name="action" value="save_plan">
                             <div class="row g-3">
-                                <div class="col-md-7">
+                                <div class="col-12">
                                     <label class="form-label small text-muted">Nome do plano</label>
                                     <input type="text" name="nome" class="form-control" data-page-autofocus="1" value="<?= app_h($formValues['nome']) ?>" required>
-                                </div>
-                                <div class="col-md-5">
-                                    <label class="form-label small text-muted">Valor da sessao</label>
-                                    <input type="text" name="valor_sessao" class="form-control" inputmode="decimal" value="<?= app_h($formValues['valor_sessao']) ?>" required>
                                 </div>
                             </div>
                             <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mt-4 plan-edit-actions">

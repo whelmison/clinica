@@ -16,14 +16,12 @@ if (!$selectedPlan) {
 
 $formValues = [
     'nome' => (string) $selectedPlan['nome'],
-    'valor_sessao' => app_money_br((float) $selectedPlan['valor_sessao']),
 ];
 
 if (app_request_method() === 'POST') {
     $action = app_request_post('action', '') ?? '';
     $formValues = [
         'nome' => app_request_post('nome', '') ?? '',
-        'valor_sessao' => app_request_post('valor_sessao', '') ?? '',
     ];
 
     if ($action === 'save_plan') {

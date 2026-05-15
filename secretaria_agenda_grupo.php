@@ -275,7 +275,7 @@ if (!function_exists('app_group_find_or_create')) {
 }
 
 if (!function_exists('app_group_active_guide')) {
-    function app_group_active_guide(mysqli $conn, int $clinicId, int $guideId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0): ?array
+    function app_group_active_guide(mysqli $conn, int $clinicId, int $guideId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): ?array
     {
         $guide = app_stmt_one(
             $conn,
@@ -294,11 +294,12 @@ if (!function_exists('app_group_active_guide')) {
                AND g.id = ?
                AND g.paciente_id = ?
                AND (g.profissional_id = ? OR g.profissional_id IS NULL)
+               AND (? <= 0 OR g.servico_id = ? OR g.servico_id IS NULL)
                AND g.autorizada = 1
                AND COALESCE(g.status_operacional, ?) NOT IN (?, ?)
              LIMIT 1',
-            'siiiiiiisss',
-        ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $guideId, $patientId, $professionalId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
+            'siiiiiiiiisss',
+            ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $guideId, $patientId, $professionalId, $serviceId, $serviceId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
         );
 
         if (!$guide) {
@@ -312,7 +313,7 @@ if (!function_exists('app_group_active_guide')) {
 }
 
 if (!function_exists('app_group_authorized_guides')) {
-    function app_group_authorized_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0): array
+    function app_group_authorized_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): array
     {
         return app_stmt_all(
             $conn,
@@ -320,8 +321,8 @@ if (!function_exists('app_group_authorized_guides')) {
                     g.codigo,
                     g.total_sessoes,
                     COALESCE(pl.nome, ?) AS plano_nome,
-                    COALESCE(a.usadas, 0) AS usadas,
-                    (g.total_sessoes - COALESCE(a.usadas, 0)) AS restantes
+                    COALESCE(a.usadas, 0) + COALESCE(r.reservadas, 0) AS usadas,
+                    (g.total_sessoes - COALESCE(a.usadas, 0) - COALESCE(r.reservadas, 0)) AS restantes
              FROM guias g
              LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
              LEFT JOIN (
@@ -330,15 +331,23 @@ if (!function_exists('app_group_authorized_guides')) {
                 WHERE clinica_id = ? AND (? <= 0 OR id <> ?)
                 GROUP BY guia_id
              ) a ON a.guia_id = g.id
+             LEFT JOIN (
+                SELECT guia_id, COUNT(*) AS reservadas
+                FROM agenda_grupo_pacientes
+                WHERE clinica_id = ? AND status <> ? AND guia_id IS NOT NULL AND atendimento_id IS NULL
+                  AND (? <= 0 OR id <> ?)
+                GROUP BY guia_id
+             ) r ON r.guia_id = g.id
              WHERE g.clinica_id = ?
                AND g.paciente_id = ?
                AND (g.profissional_id = ? OR g.profissional_id IS NULL)
+               AND (? <= 0 OR g.servico_id = ? OR g.servico_id IS NULL)
                AND g.autorizada = 1
                AND COALESCE(g.status_operacional, ?) NOT IN (?, ?)
              HAVING restantes > 0
              ORDER BY g.data DESC, g.id DESC',
-            'siiiiiisss',
-        ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, $patientId, $professionalId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
+            'siiiisiiiiiiisss',
+        ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, 'cancelado', $ignoreMemberId, $ignoreMemberId, $clinicId, $patientId, $professionalId, $serviceId, $serviceId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
         );
     }
 }
@@ -421,6 +430,376 @@ if (!function_exists('app_group_patient_whatsapp_link')) {
     }
 }
 
+if (!function_exists('app_group_reserved_guide_sessions')) {
+    function app_group_reserved_guide_sessions(mysqli $conn, int $clinicId, int $guideId, int $ignoreMemberId = 0): int
+    {
+        $row = app_stmt_one(
+            $conn,
+            'SELECT COUNT(*) AS total
+             FROM agenda_grupo_pacientes
+             WHERE clinica_id = ?
+               AND guia_id = ?
+               AND guia_id IS NOT NULL
+               AND atendimento_id IS NULL
+               AND status <> ?
+               AND (? <= 0 OR id <> ?)',
+            'iisii',
+            [$clinicId, $guideId, 'cancelado', $ignoreMemberId, $ignoreMemberId]
+        );
+
+        return (int) ($row['total'] ?? 0);
+    }
+}
+
+if (!function_exists('app_group_patient_schedule_rows')) {
+    function app_group_patient_schedule_rows(mysqli $conn, int $clinicId, int $patientId, string $fromDate, int $limit = 20): array
+    {
+        if ($patientId <= 0) {
+            return [];
+        }
+
+        $timestamp = strtotime($fromDate);
+        $fromDate = $timestamp ? date('Y-m-d', $timestamp) : date('Y-m-d');
+        $limit = max(1, min(40, $limit));
+
+        $individualRows = app_stmt_all(
+            $conn,
+            'SELECT a.id AS item_id,
+                    0 AS grupo_id,
+                    a.profissional_id,
+                    a.servico_id,
+                    ? AS tipo_agenda,
+                    a.data_agendamento,
+                    a.hora_inicio,
+                    a.hora_fim,
+                    a.status,
+                    COALESCE(p.nome, ?) AS profissional_nome,
+                    COALESCE(s.nome, ?) AS servico_nome,
+                    a.observacoes
+             FROM agenda a
+             LEFT JOIN profissionais p ON p.id = a.profissional_id AND p.clinica_id = a.clinica_id
+             LEFT JOIN servicos s ON s.id = a.servico_id AND s.clinica_id = a.clinica_id
+             WHERE a.clinica_id = ?
+               AND a.cliente_id = ?
+               AND a.status <> ?
+               AND a.data_agendamento >= ?
+             ORDER BY a.data_agendamento, a.hora_inicio
+             LIMIT ' . $limit,
+            'sssiiss',
+            ['individual', '', '', $clinicId, $patientId, 'cancelado', $fromDate]
+        );
+
+        $groupRows = app_stmt_all(
+            $conn,
+            'SELECT gp.id AS item_id,
+                    g.id AS grupo_id,
+                    g.profissional_id,
+                    g.servico_id,
+                    ? AS tipo_agenda,
+                    g.data_agendamento,
+                    g.hora_inicio,
+                    g.hora_fim,
+                    gp.status,
+                    COALESCE(p.nome, ?) AS profissional_nome,
+                    COALESCE(s.nome, ?) AS servico_nome,
+                    gp.observacoes
+             FROM agenda_grupo_pacientes gp
+             INNER JOIN agenda_grupos g ON g.id = gp.grupo_id AND g.clinica_id = gp.clinica_id
+             LEFT JOIN profissionais p ON p.id = g.profissional_id AND p.clinica_id = g.clinica_id
+             LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
+             WHERE gp.clinica_id = ?
+               AND gp.paciente_id = ?
+               AND gp.status <> ?
+               AND g.data_agendamento >= ?
+             ORDER BY g.data_agendamento, g.hora_inicio
+             LIMIT ' . $limit,
+            'sssiiss',
+            ['grupo', '', '', $clinicId, $patientId, 'cancelado', $fromDate]
+        );
+
+        $rows = array_merge($individualRows, $groupRows);
+        usort(
+            $rows,
+            static fn (array $left, array $right): int => strcmp(
+                (string) ($left['data_agendamento'] ?? '') . ' ' . (string) ($left['hora_inicio'] ?? ''),
+                (string) ($right['data_agendamento'] ?? '') . ' ' . (string) ($right['hora_inicio'] ?? '')
+            )
+        );
+
+        return array_slice($rows, 0, $limit);
+    }
+}
+
+if (!function_exists('app_group_quick_weekday_labels')) {
+    function app_group_quick_weekday_labels(): array
+    {
+        return [
+            1 => 'Seg',
+            2 => 'Ter',
+            3 => 'Qua',
+            4 => 'Qui',
+            5 => 'Sex',
+            6 => 'Sab',
+            0 => 'Dom',
+        ];
+    }
+}
+
+if (!function_exists('app_group_quick_weekdays')) {
+    function app_group_quick_weekdays(mixed $value): array
+    {
+        $items = is_array($value) ? $value : (($value === null || $value === '') ? [] : [$value]);
+        $days = [];
+
+        foreach ($items as $item) {
+            $day = (int) $item;
+
+            if ($day >= 0 && $day <= 6) {
+                $days[$day] = $day;
+            }
+        }
+
+        $order = [1, 2, 3, 4, 5, 6, 0];
+        return array_values(array_filter($order, static fn (int $day): bool => array_key_exists($day, $days)));
+    }
+}
+
+if (!function_exists('app_group_quick_date_value')) {
+    function app_group_quick_date_value(?string $date, string $fallback): string
+    {
+        $timestamp = strtotime((string) $date);
+
+        return $timestamp ? date('Y-m-d', $timestamp) : $fallback;
+    }
+}
+
+if (!function_exists('app_group_quick_time_value')) {
+    function app_group_quick_time_value(?string $time, string $fallback = '08:00'): string
+    {
+        $parsed = DateTime::createFromFormat('H:i', (string) $time) ?: DateTime::createFromFormat('H:i:s', (string) $time);
+
+        return $parsed ? $parsed->format('H:i') : $fallback;
+    }
+}
+
+if (!function_exists('app_group_quick_reason_action')) {
+    function app_group_quick_reason_action(string $reason): string
+    {
+        return match ($reason) {
+            'Horario nao liberado pelo profissional.' => 'Libere este horario em Liberar horarios ou escolha outro horario/dia ja liberado.',
+            'Horario ocupado por agenda individual.' => 'Escolha outro horario/dia ou remaneje a agenda individual.',
+            'Horario ocupado por outro grupo.' => 'Escolha outro horario/dia ou abra o grupo correto para esse servico.',
+            'Paciente ja tem agenda neste horario.' => 'Escolha outro horario/dia para o paciente ou remaneje o agendamento existente.',
+            'Paciente ja esta neste grupo.' => 'Este dia ja foi lancado para o paciente; escolha outra data ou reduza a quantidade.',
+            'Grupo lotado.' => 'Escolha outro horario/dia ou aumente a capacidade do grupo, se fizer sentido.',
+            default => 'Ajuste a data inicial, os dias da semana, o horario ou a quantidade de sessoes.',
+        };
+    }
+}
+
+if (!function_exists('app_group_quick_preview_error')) {
+    function app_group_quick_preview_error(array $rows, array $skipped, int $sessions): string
+    {
+        $valid = count($rows);
+        $missing = max(0, $sessions - $valid);
+        $reasonCounts = [];
+
+        foreach ($skipped as $item) {
+            $reason = trim((string) ($item['reason'] ?? ''));
+
+            if ($reason === '') {
+                continue;
+            }
+
+            $reasonCounts[$reason] = ($reasonCounts[$reason] ?? 0) + 1;
+        }
+
+        arsort($reasonCounts);
+        $mainReason = (string) array_key_first($reasonCounts);
+        $parts = [
+            'Foram encontradas ' . $valid . ' de ' . $sessions . ' sessao(oes).',
+            'Faltam ' . $missing . '.',
+        ];
+
+        if ($mainReason !== '') {
+            $reasonText = [];
+
+            foreach (array_slice($reasonCounts, 0, 3, true) as $reason => $total) {
+                $reasonText[] = $reason . ' (' . $total . ' data(s))';
+            }
+
+            $parts[] = 'Motivo: ' . implode('; ', $reasonText) . '.';
+            $parts[] = 'O que fazer: ' . app_group_quick_reason_action($mainReason);
+        } else {
+            $parts[] = 'Motivo: a grade escolhida nao gerou datas suficientes dentro do periodo pesquisado.';
+            $parts[] = 'O que fazer: marque mais dias da semana, escolha outro horario ou reduza a quantidade de sessoes.';
+        }
+
+        return implode(' ', $parts);
+    }
+}
+
+if (!function_exists('app_group_quick_group_for_slot')) {
+    function app_group_quick_group_for_slot(mysqli $conn, int $clinicId, int $professionalId, int $serviceId, string $date, string $start): ?array
+    {
+        $startSql = strlen($start) === 5 ? $start . ':00' : $start;
+
+        return app_stmt_one(
+            $conn,
+            'SELECT * FROM agenda_grupos
+             WHERE clinica_id = ? AND profissional_id = ? AND servico_id = ? AND data_agendamento = ? AND hora_inicio = ?
+             LIMIT 1',
+            'iiiss',
+            [$clinicId, $professionalId, $serviceId, $date, $startSql]
+        );
+    }
+}
+
+if (!function_exists('app_group_quick_build_preview')) {
+    function app_group_quick_build_preview(mysqli $conn, int $clinicId, int $professionalId, array $service, int $patientId, string $startDate, string $time, int $sessions, array $weekdays): array
+    {
+        $rows = [];
+        $skipped = [];
+        $errors = [];
+        $sessions = max(1, min(60, $sessions));
+        $weekdays = app_group_quick_weekdays($weekdays);
+        $startDate = app_group_quick_date_value($startDate, date('Y-m-d'));
+        $time = app_group_quick_time_value($time);
+        $startTime = DateTime::createFromFormat('H:i', $time);
+
+        if ($weekdays === []) {
+            $errors[] = 'Marque pelo menos um dia da semana.';
+        }
+
+        if (!$startTime) {
+            $errors[] = 'Informe um horario valido.';
+        }
+
+        if ($patientId <= 0) {
+            $errors[] = 'Escolha um paciente.';
+        }
+
+        if ($errors !== []) {
+            return ['rows' => [], 'skipped' => [], 'errors' => $errors, 'sessions' => $sessions];
+        }
+
+        $duration = max(1, (int) ($service['tempo_minutos'] ?? 0));
+        $startSql = $startTime->format('H:i:s');
+        $endSql = app_group_minutes_to_time(app_group_time_to_minutes($startSql) + $duration) . ':00';
+        $capacityDefault = max(1, (int) ($service['capacidade_agendamento'] ?? 1));
+        $cursor = new DateTime($startDate);
+        $guard = 0;
+
+        while (count($rows) < $sessions && $guard < 420) {
+            $date = $cursor->format('Y-m-d');
+            $weekday = (int) $cursor->format('w');
+
+            if (in_array($weekday, $weekdays, true)) {
+                $action = 'Criar grupo';
+                $capacity = $capacityDefault;
+                $used = 0;
+                $status = 'ok';
+                $reason = '';
+                $existingGroup = app_group_quick_group_for_slot($conn, $clinicId, $professionalId, (int) $service['id'], $date, $startSql);
+
+                if ($existingGroup) {
+                    $action = 'Grupo existente';
+                    $capacity = max(1, (int) ($existingGroup['capacidade'] ?? $capacityDefault));
+                    $total = app_stmt_one($conn, 'SELECT COUNT(*) AS total FROM agenda_grupo_pacientes WHERE clinica_id = ? AND grupo_id = ? AND status <> ?', 'iis', [$clinicId, (int) $existingGroup['id'], 'cancelado']);
+                    $exists = app_stmt_one($conn, 'SELECT id FROM agenda_grupo_pacientes WHERE clinica_id = ? AND grupo_id = ? AND paciente_id = ? LIMIT 1', 'iii', [$clinicId, (int) $existingGroup['id'], $patientId]);
+                    $used = (int) ($total['total'] ?? 0);
+
+                    if ($exists) {
+                        $status = 'skip';
+                        $reason = 'Paciente ja esta neste grupo.';
+                    } elseif ($used >= $capacity) {
+                        $status = 'skip';
+                        $reason = 'Grupo lotado.';
+                    }
+                }
+
+                if ($status === 'ok') {
+                    $dateError = app_group_validate_schedule_date($date);
+
+                    if ($dateError !== null) {
+                        $status = 'skip';
+                        $reason = $dateError;
+                    } else {
+                        if (!$existingGroup) {
+                            if (!app_group_has_availability($conn, $clinicId, $professionalId, $date, $startSql, $endSql)) {
+                                $status = 'skip';
+                                $reason = 'Horario nao liberado pelo profissional.';
+                            } elseif (app_group_has_individual_conflict($conn, $clinicId, $professionalId, $date, $startSql, $endSql)) {
+                                $status = 'skip';
+                                $reason = 'Horario ocupado por agenda individual.';
+                            } elseif (app_group_has_other_group_conflict($conn, $clinicId, $professionalId, (int) $service['id'], $date, $startSql, $endSql)) {
+                                $status = 'skip';
+                                $reason = 'Horario ocupado por outro grupo.';
+                            }
+                        }
+
+                        $patientConflict = app_group_patient_schedule_conflict($conn, $clinicId, $patientId, $date, $startSql, $endSql);
+
+                        if ($status === 'ok' && $patientConflict !== null) {
+                            $status = 'skip';
+                            $reason = 'Paciente ja tem agenda neste horario.';
+                        }
+                    }
+                }
+
+                $row = [
+                    'session' => count($rows) + 1,
+                    'date' => $date,
+                    'weekday' => $weekday,
+                    'time' => substr($startSql, 0, 5),
+                    'end_time' => substr($endSql, 0, 5),
+                    'action' => $action,
+                    'capacity' => $capacity,
+                    'used' => $used,
+                    'reason' => $reason,
+                    'group_id' => $existingGroup ? (int) $existingGroup['id'] : 0,
+                ];
+
+                if ($status === 'ok') {
+                    $rows[] = $row;
+                } else {
+                    $skipped[] = $row;
+                }
+            }
+
+            $cursor->modify('+1 day');
+            $guard++;
+        }
+
+        if (count($rows) < $sessions) {
+            $errors[] = app_group_quick_preview_error($rows, $skipped, $sessions);
+        }
+
+        return ['rows' => $rows, 'skipped' => $skipped, 'errors' => $errors, 'sessions' => $sessions];
+    }
+}
+
+if (!function_exists('app_group_quick_whatsapp_message')) {
+    function app_group_quick_whatsapp_message(array $patient, array $rows, string $professional, string $service): string
+    {
+        $patientName = trim((string) ($patient['nome'] ?? 'Paciente')) ?: 'Paciente';
+        $lines = [
+            'Ola, ' . $patientName . '! Segue sua grade de atendimentos em grupo.',
+            'Profissional: ' . $professional,
+            'Servico: ' . $service,
+            '',
+        ];
+
+        foreach ($rows as $row) {
+            $lines[] = str_pad((string) (int) $row['session'], 2, '0', STR_PAD_LEFT)
+                . ' - ' . app_date_br((string) $row['date'])
+                . ' as ' . (string) $row['time'];
+        }
+
+        return implode("\n", $lines);
+    }
+}
+
 $professionals = app_stmt_all(
     $conn,
     'SELECT DISTINCT p.id, p.nome, p.telefone
@@ -478,6 +857,7 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
         'service_id' => $postServiceId ?: $selectedServiceId,
         'week_start' => $postWeekStart,
     ];
+    $quickRedirectExtra = [];
     $result = ['ok' => false, 'message' => 'Acao invalida.'];
     $postService = $postProfessionalId > 0 && $postServiceId > 0
         ? app_group_service($conn, $clinicId, $postProfessionalId, $postServiceId)
@@ -538,6 +918,100 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
                 }
             }
         }
+    } elseif ($action === 'quick_schedule') {
+        $patientId = app_post_int('paciente_id');
+        $guideId = app_post_int('guia_id');
+        $startDate = app_group_quick_date_value(app_request_post('data_inicio', date('Y-m-d')), date('Y-m-d'));
+        $time = app_group_quick_time_value(app_request_post('hora_inicio', '08:00'));
+        $sessions = max(1, min(60, app_post_int('quantidade_sessoes', 1)));
+        $weekdays = app_group_quick_weekdays($_POST['dias_semana'] ?? []);
+        $notes = trim((string) app_request_post('observacoes', ''));
+        $quickRedirectExtra = [
+            'modelo' => 'rapido',
+            'paciente_id' => $patientId,
+            'guia_id' => $guideId,
+            'data_inicio' => $startDate,
+            'hora_inicio' => $time,
+            'quantidade_sessoes' => $sessions,
+            'dias_semana' => $weekdays,
+        ];
+        $guide = $guideId > 0 ? app_group_active_guide($conn, $clinicId, $guideId, $patientId, $postProfessionalId, 0, 0, (int) ($postService['id'] ?? 0)) : null;
+
+        if ($patientId <= 0) {
+            $result = ['ok' => false, 'message' => 'Escolha um paciente da lista.'];
+        } elseif (!$guide) {
+            $result = ['ok' => false, 'message' => 'Escolha uma guia autorizada com sessoes disponiveis.'];
+        } else {
+            $reserved = app_group_reserved_guide_sessions($conn, $clinicId, $guideId);
+            $remaining = max(0, (int) ($guide['total_sessoes'] ?? 0) - (int) ($guide['usadas'] ?? 0) - $reserved);
+            $sessions = max(1, min($sessions, max(1, $remaining)));
+            $quickRedirectExtra['quantidade_sessoes'] = $sessions;
+            $preview = app_group_quick_build_preview($conn, $clinicId, $postProfessionalId, $postService, $patientId, $startDate, $time, $sessions, $weekdays);
+
+            if ($remaining <= 0) {
+                $result = ['ok' => false, 'message' => 'A guia selecionada nao possui sessoes disponiveis.'];
+            } elseif (!empty($preview['errors'])) {
+                $result = ['ok' => false, 'message' => implode(' ', $preview['errors'])];
+            } elseif (count($preview['rows'] ?? []) < $sessions) {
+                $result = ['ok' => false, 'message' => 'A previa nao completou a quantidade de sessoes solicitada.'];
+            } else {
+                $patient = app_stmt_one($conn, 'SELECT id, nome, telefone FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [$clinicId, $patientId]);
+                $created = 0;
+
+                $conn->begin_transaction();
+
+                try {
+                    foreach ($preview['rows'] as $row) {
+                        $openResult = app_group_find_or_create($conn, $clinicId, $postProfessionalId, $postService, (string) $row['date'], (string) $row['time']);
+
+                        if (!($openResult['ok'] ?? false) || empty($openResult['group'])) {
+                            throw new RuntimeException((string) ($openResult['message'] ?? 'Nao foi possivel abrir o grupo.'));
+                        }
+
+                        $group = $openResult['group'];
+                        $total = app_stmt_one($conn, 'SELECT COUNT(*) AS total FROM agenda_grupo_pacientes WHERE clinica_id = ? AND grupo_id = ? AND status <> ?', 'iis', [$clinicId, (int) $group['id'], 'cancelado']);
+                        $exists = app_stmt_one($conn, 'SELECT id FROM agenda_grupo_pacientes WHERE clinica_id = ? AND grupo_id = ? AND paciente_id = ? LIMIT 1', 'iii', [$clinicId, (int) $group['id'], $patientId]);
+
+                        if ($exists) {
+                            throw new RuntimeException('Paciente ja esta em um dos grupos da previa.');
+                        }
+
+                        if ((int) ($total['total'] ?? 0) >= (int) $group['capacidade']) {
+                            throw new RuntimeException('Um dos grupos ficou lotado antes da confirmacao.');
+                        }
+
+                        $ok = app_stmt_execute(
+                            $conn,
+                            'INSERT INTO agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id, guia_id, status, observacoes)
+                             VALUES (?, ?, ?, ?, ?, ?)',
+                            'iiiiss',
+                            [$clinicId, (int) $group['id'], $patientId, $guideId, 'agendado', $notes]
+                        );
+
+                        if (!$ok) {
+                            throw new RuntimeException('Nao foi possivel incluir o paciente na grade.');
+                        }
+
+                        $created++;
+                    }
+
+                    $conn->commit();
+                    $postProfessional = app_stmt_one($conn, 'SELECT nome FROM profissionais WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [$clinicId, $postProfessionalId]);
+                    $professionalName = (string) ($postProfessional['nome'] ?? 'Profissional');
+                    $serviceName = (string) ($postService['nome'] ?? 'Servico');
+                    $message = $patient
+                        ? app_group_quick_whatsapp_message($patient, $preview['rows'], $professionalName, $serviceName)
+                        : '';
+                    $_SESSION['app_group_quick_whatsapp_url'] = $patient ? app_group_whatsapp_link((string) ($patient['telefone'] ?? ''), $message) : null;
+                    $_SESSION['app_group_quick_confirmed_rows'] = $preview['rows'];
+                    $result = ['ok' => true, 'message' => $created . ' agendamento(s) em grupo confirmados.'];
+                    $quickRedirectExtra['confirmado'] = 1;
+                } catch (Throwable $exception) {
+                    $conn->rollback();
+                    $result = ['ok' => false, 'message' => $exception->getMessage()];
+                }
+            }
+        }
     } elseif ($action === 'update_member_status') {
         $memberId = app_post_int('member_id');
         $status = app_request_post('status', 'agendado') ?? 'agendado';
@@ -569,7 +1043,9 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
                 ? ['ok' => true, 'message' => 'Status do paciente atualizado.', 'group_id' => (int) $member['grupo_id']]
                 : ['ok' => false, 'message' => 'Nao foi possivel atualizar o status.'];
         } else {
-            $guide = $guideId > 0 ? app_group_active_guide($conn, $clinicId, $guideId, (int) $member['paciente_id'], (int) $member['profissional_id']) : null;
+            $guide = $guideId > 0
+                ? app_group_active_guide($conn, $clinicId, $guideId, (int) $member['paciente_id'], (int) $member['profissional_id'], (int) ($member['atendimento_id'] ?? 0), $memberId, (int) ($member['servico_id'] ?? 0))
+                : null;
 
             if (!$guide) {
                 $result = ['ok' => false, 'message' => 'Informe uma guia autorizada e com sessoes disponiveis para realizar.'];
@@ -604,7 +1080,9 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
 
         foreach ($members as $member) {
             $guideId = (int) ($member['guia_id'] ?? 0);
-            $guide = $guideId > 0 ? app_group_active_guide($conn, $clinicId, $guideId, (int) $member['paciente_id'], (int) $member['profissional_id']) : null;
+            $guide = $guideId > 0
+                ? app_group_active_guide($conn, $clinicId, $guideId, (int) $member['paciente_id'], (int) $member['profissional_id'], 0, (int) $member['id'], (int) ($member['servico_id'] ?? 0))
+                : null;
 
             if (!$guide) {
                 $blocked++;
@@ -646,6 +1124,10 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
         $extra['group_id'] = (int) $result['group_id'];
     }
 
+    if ($quickRedirectExtra !== []) {
+        $extra = array_merge($extra, $quickRedirectExtra);
+    }
+
     app_redirect('secretaria_agenda_grupo.php?' . app_build_query($redirectBase, $extra));
 }
 
@@ -655,6 +1137,933 @@ foreach ($professionals as $professional) {
         $selectedProfessional = $professional;
         break;
     }
+}
+
+$quickMode = app_request_query('modelo', '') === 'rapido';
+
+if ($quickMode) {
+    $quickPatientId = app_query_int('paciente_id');
+    $quickGuideId = app_query_int('guia_id');
+    $quickStartDate = app_group_quick_date_value(app_request_query('data_inicio', $weekStart), $weekStart);
+    $quickTime = app_group_quick_time_value(app_request_query('hora_inicio', '08:00'));
+    $quickWeekdays = app_group_quick_weekdays($_GET['dias_semana'] ?? [1, 3, 5]);
+    $quickPatient = $quickPatientId > 0
+        ? app_stmt_one($conn, 'SELECT id, nome, telefone FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [$clinicId, $quickPatientId])
+        : null;
+    $quickGuides = $quickPatientId > 0 && $selectedProfessionalId > 0
+        ? app_group_authorized_guides($conn, $clinicId, $quickPatientId, $selectedProfessionalId, 0, 0, $selectedServiceId)
+        : [];
+    $quickPatientScheduleRows = $quickPatientId > 0
+        ? app_group_patient_schedule_rows($conn, $clinicId, $quickPatientId, date('Y-m-d'), 20)
+        : [];
+    $quickSessionsDefault = 10;
+    $quickSessionsLimit = 60;
+
+    foreach ($quickGuides as $quickGuideOption) {
+        if ((int) $quickGuideOption['id'] === $quickGuideId) {
+            $quickSessionsDefault = max(1, (int) ($quickGuideOption['restantes'] ?? 1));
+            $quickSessionsLimit = $quickSessionsDefault;
+            break;
+        }
+    }
+
+    $quickSessions = max(1, min($quickSessionsLimit, app_query_int('quantidade_sessoes', $quickSessionsDefault)));
+    $quickCanPreview = $selectedService && $quickPatientId > 0 && $quickGuideId > 0 && $quickWeekdays !== [];
+    $quickPreview = $quickCanPreview
+        ? app_group_quick_build_preview($conn, $clinicId, $selectedProfessionalId, $selectedService, $quickPatientId, $quickStartDate, $quickTime, $quickSessions, $quickWeekdays)
+        : ['rows' => [], 'skipped' => [], 'errors' => [], 'sessions' => $quickSessions];
+    $quickConfirmed = app_request_query('confirmado', '') === '1';
+    $quickConfirmedRows = $_SESSION['app_group_quick_confirmed_rows'] ?? null;
+    unset($_SESSION['app_group_quick_confirmed_rows']);
+
+    if ($quickConfirmed && is_array($quickConfirmedRows)) {
+        $quickPreview = ['rows' => $quickConfirmedRows, 'skipped' => [], 'errors' => [], 'sessions' => count($quickConfirmedRows)];
+    }
+
+    $quickRows = $quickPreview['rows'] ?? [];
+    $quickSkippedRows = $quickPreview['skipped'] ?? [];
+    $quickRowsByMonth = [];
+    $quickPatientScheduleByMonth = [];
+
+    foreach ($quickRows as $quickRow) {
+        $monthKey = date('Y-m', strtotime((string) $quickRow['date']));
+        $quickRowsByMonth[$monthKey][] = $quickRow;
+    }
+
+    foreach ($quickPatientScheduleRows as $scheduleRow) {
+        $scheduleDate = (string) ($scheduleRow['data_agendamento'] ?? '');
+        $timestamp = strtotime($scheduleDate);
+
+        if (!$timestamp) {
+            continue;
+        }
+
+        $monthKey = date('Y-m', $timestamp);
+        $dateKey = date('Y-m-d', $timestamp);
+        $quickPatientScheduleByMonth[$monthKey][$dateKey][] = $scheduleRow;
+    }
+
+    $quickWhatsappUrl = $_SESSION['app_group_quick_whatsapp_url'] ?? null;
+    unset($_SESSION['app_group_quick_whatsapp_url']);
+    $quickLegacyUrl = 'secretaria_agenda_grupo.php?' . app_build_query([
+        'professional_id' => $selectedProfessionalId,
+        'service_id' => $selectedServiceId,
+        'week_start' => $weekStart,
+    ]);
+    $menuFlashMode = 'manual';
+    ?>
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Cronograma rapido - Agenda em Grupo</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="assets/clinic-modern.css" rel="stylesheet">
+<style>
+body {
+    background: linear-gradient(180deg, #f7fbfc 0%, #edf4f6 100%);
+    color: #193542;
+    min-height: 100vh;
+}
+.quick-shell {
+    padding: 0.55rem 0.9rem 0.9rem;
+}
+.quick-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+.quick-head h1 {
+    color: #16333f;
+    font-size: 1.25rem;
+    font-weight: 800;
+    margin: 0;
+}
+.quick-head p {
+    color: #627985;
+    font-size: 0.78rem;
+    margin: 0.18rem 0 0;
+}
+.quick-head-side {
+    align-items: flex-end;
+    display: grid;
+    gap: 0.4rem;
+    justify-items: end;
+}
+.quick-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    justify-content: flex-end;
+}
+.quick-tag {
+    align-items: center;
+    border-radius: 8px;
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 800;
+    min-height: 30px;
+    padding: 0.28rem 0.75rem;
+}
+.quick-tag.professional {
+    background: #e5effb;
+    border: 1px solid #c8d9ef;
+    color: #225c9d;
+}
+.quick-tag.service {
+    background: #e0f4ea;
+    border: 1px solid #bedfcd;
+    color: #176b3c;
+}
+.quick-return {
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    min-height: 32px;
+}
+.quick-panel {
+    background: #fff;
+    border: 1px solid #d9e6eb;
+    border-radius: 8px;
+    box-shadow: 0 12px 26px rgba(24, 56, 69, 0.08);
+    margin-bottom: 0.55rem;
+    padding: 0.62rem;
+}
+.quick-builder {
+    align-items: end;
+    display: grid;
+    gap: 0.45rem;
+    grid-template-columns: 1fr;
+}
+.quick-form-heading {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.7rem;
+    justify-content: space-between;
+}
+.quick-form-heading h2,
+.quick-preview-title h2 {
+    color: #16333f;
+    font-size: 0.98rem;
+    font-weight: 800;
+    margin: 0;
+}
+.quick-form-heading p,
+.quick-preview-title p {
+    color: #627985;
+    font-size: 0.76rem;
+    margin: 0.18rem 0 0;
+}
+.quick-form-grid {
+    display: grid;
+    gap: 0.42rem 0.55rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.quick-field label,
+.quick-days-label {
+    color: #546d79;
+    display: block;
+    font-size: 0.76rem;
+    font-weight: 800;
+    margin-bottom: 0.18rem;
+}
+.quick-field.full {
+    grid-column: 1 / -1;
+}
+.quick-field.wide {
+    grid-column: span 2;
+}
+.quick-field .form-control,
+.quick-field .form-select {
+    background: #f8fbfc;
+    border-color: #d9e6eb;
+    border-radius: 8px;
+    font-size: 0.84rem;
+    min-height: 34px;
+}
+.quick-days {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.34rem;
+}
+.quick-day-option input {
+    position: absolute;
+    opacity: 0;
+}
+.quick-day-option span {
+    background: #fff;
+    border: 1px solid #d9e6eb;
+    border-radius: 8px;
+    color: #627985;
+    cursor: pointer;
+    display: inline-flex;
+    font-weight: 800;
+    justify-content: center;
+    min-width: 40px;
+    padding: 0.3rem 0.45rem;
+}
+.quick-day-option input:checked + span {
+    background: #e0f4ea;
+    border-color: #1f7a8c;
+    color: #176b3c;
+}
+.quick-actions {
+    align-items: end;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+.quick-actions .btn {
+    border-radius: 8px;
+    font-weight: 800;
+    min-height: 34px;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+}
+.quick-preview-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 0.7rem;
+    justify-content: space-between;
+    margin-bottom: 0.45rem;
+}
+.quick-count {
+    background: #e0f4ea;
+    border: 1px solid #bedfcd;
+    border-radius: 8px;
+    color: #176b3c;
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 800;
+    min-height: 30px;
+    padding: 0.28rem 0.75rem;
+}
+.quick-calendar {
+    display: grid;
+    gap: 0.75rem;
+}
+.quick-month h3 {
+    color: #546d79;
+    font-size: 0.86rem;
+    font-weight: 800;
+    margin: 0 0 0.55rem;
+    text-transform: uppercase;
+}
+.quick-day-grid {
+    display: grid;
+    gap: 0.72rem;
+    grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+}
+.quick-day-card {
+    background: #fbfdfe;
+    border: 1px solid #d9e6eb;
+    border-left: 4px solid #1f9d6d;
+    border-radius: 8px;
+    display: grid;
+    gap: 0.42rem;
+    min-height: 112px;
+    padding: 0.65rem;
+}
+.quick-day-card.is-create {
+    border-left-color: #276fbf;
+}
+.quick-day-date {
+    align-items: flex-start;
+    display: flex;
+    justify-content: space-between;
+}
+.quick-day-date strong {
+    color: #16333f;
+    display: block;
+    font-size: 1.35rem;
+    line-height: 1;
+}
+.quick-day-date span {
+    color: #627985;
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-top: 0.2rem;
+}
+.quick-session {
+    background: #edf6f7;
+    border-radius: 999px;
+    color: #315766;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 0.2rem 0.5rem;
+}
+.quick-card-main strong {
+    color: #16333f;
+    display: block;
+    font-size: 0.96rem;
+}
+.quick-card-main span {
+    color: #627985;
+    display: block;
+    font-size: 0.82rem;
+    margin-top: 0.12rem;
+}
+.quick-chip {
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 800;
+    padding: 0.24rem 0.62rem;
+    width: fit-content;
+}
+.quick-chip.existing {
+    background: #e0f4ea;
+    color: #176b3c;
+}
+.quick-chip.create {
+    background: #e5effb;
+    color: #225c9d;
+}
+.quick-patient-agenda {
+    border-top: 3px solid #276fbf;
+}
+.quick-patient-calendar {
+    display: grid;
+    gap: 0.55rem;
+}
+.quick-agenda-month h3 {
+    color: #546d79;
+    font-size: 0.78rem;
+    font-weight: 800;
+    margin: 0 0 0.4rem;
+    text-transform: uppercase;
+}
+.quick-scheduled-days {
+    display: grid;
+    gap: 0.45rem;
+    grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+}
+.quick-scheduled-day {
+    background: #fbfdfe;
+    border: 1px solid #d9e6eb;
+    border-left: 3px solid #276fbf;
+    border-radius: 8px;
+    padding: 0.45rem;
+}
+.quick-scheduled-day-head {
+    align-items: baseline;
+    display: flex;
+    gap: 0.35rem;
+    margin-bottom: 0.28rem;
+}
+.quick-scheduled-day-head strong {
+    color: #16333f;
+    font-size: 1rem;
+    line-height: 1;
+}
+.quick-scheduled-day-head span {
+    color: #8095a0;
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+.quick-calendar-event {
+    background: #eef5ff;
+    border: 1px solid #c8d9ef;
+    border-left: 3px solid #276fbf;
+    border-radius: 6px;
+    color: #193542;
+    display: block;
+    margin-top: 0.22rem;
+    padding: 0.26rem 0.32rem;
+    text-decoration: none;
+}
+.quick-calendar-event.is-grupo {
+    background: #ecf8f1;
+    border-color: #bedfcd;
+    border-left-color: #1f9d6d;
+}
+.quick-calendar-event strong,
+.quick-calendar-event span,
+.quick-calendar-event small {
+    display: block;
+    line-height: 1.2;
+}
+.quick-calendar-event strong {
+    color: #16333f;
+    font-size: 0.76rem;
+}
+.quick-calendar-event span {
+    color: #315766;
+    font-size: 0.74rem;
+    font-weight: 800;
+    margin-top: 0.16rem;
+}
+.quick-calendar-event small {
+    color: #627985;
+    font-size: 0.68rem;
+    margin-top: 0.16rem;
+}
+.quick-chip.individual {
+    background: #e5effb;
+    color: #225c9d;
+}
+.quick-chip.grupo {
+    background: #e0f4ea;
+    color: #176b3c;
+}
+.quick-empty {
+    align-items: center;
+    background: #f8fbfc;
+    border: 1px dashed #c9dce3;
+    border-radius: 8px;
+    color: #627985;
+    display: flex;
+    min-height: 88px;
+    padding: 0.75rem;
+}
+.quick-blocked {
+    background: #fff9ed;
+    border: 1px solid #f0d5a2;
+    border-radius: 8px;
+    color: #6e4a12;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 0.85rem;
+}
+.quick-blocked strong {
+    color: #553707;
+}
+.quick-blocked ul {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0.6rem 0 0;
+    padding-left: 1.1rem;
+}
+.quick-blocked li {
+    line-height: 1.35;
+}
+.quick-inline-notice {
+    bottom: 1rem;
+    left: 50%;
+    max-width: min(560px, calc(100vw - 2rem));
+    position: fixed;
+    transform: translateX(-50%);
+    z-index: 1080;
+}
+.quick-autocomplete {
+    position: relative;
+}
+.quick-autocomplete-menu {
+    background: #fff;
+    border: 1px solid #d9e6eb;
+    border-radius: 8px;
+    box-shadow: 0 18px 34px rgba(22, 51, 63, 0.16);
+    display: none;
+    left: 0;
+    max-height: 220px;
+    overflow: auto;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 1060;
+}
+.quick-autocomplete-menu.is-open {
+    display: block;
+}
+.quick-autocomplete-option {
+    background: transparent;
+    border: 0;
+    color: #16333f;
+    display: block;
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    width: 100%;
+}
+.quick-preview-trigger {
+    align-items: center;
+    background: #fff;
+    border: 1px solid #d9e6eb;
+    border-radius: 8px;
+    display: flex;
+    gap: 0.7rem;
+    justify-content: space-between;
+    margin-bottom: 0.85rem;
+    padding: 0.65rem 0.85rem;
+}
+.quick-preview-trigger strong {
+    color: #16333f;
+    display: block;
+    line-height: 1.15;
+}
+.quick-preview-trigger span {
+    color: #627985;
+    display: block;
+    font-size: 0.82rem;
+    margin-top: 0.12rem;
+}
+.quick-preview-modal .modal-dialog {
+    max-width: min(1040px, calc(100vw - 1rem));
+}
+.quick-preview-modal .modal-header,
+.quick-preview-modal .modal-body,
+.quick-preview-modal .modal-footer {
+    padding: 0.85rem 1rem;
+}
+.quick-preview-modal .modal-body {
+    background: #f8fbfc;
+}
+@media (max-width: 1100px) {
+    .quick-builder,
+    .quick-form-grid {
+        grid-template-columns: 1fr;
+    }
+    .quick-field.wide {
+        grid-column: 1;
+    }
+    .quick-head,
+    .quick-form-heading,
+    .quick-preview-head {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .quick-head-side {
+        align-items: stretch;
+        justify-items: stretch;
+    }
+    .quick-tags,
+    .quick-actions {
+        justify-content: flex-start;
+    }
+}
+</style>
+</head>
+<body>
+<?php include 'partials/menu.php'; ?>
+<?php $quickFlash = $flash ?? null; ?>
+<main class="quick-shell">
+    <section class="quick-head">
+        <div>
+            <h1>Agenda em Grupo</h1>
+            <p>Profissional ja selecionado. Ao identificar servico de grupo, o sistema abre este passo rapido.</p>
+        </div>
+        <div class="quick-head-side">
+            <div class="quick-tags">
+                <span class="quick-tag professional"><?= app_h((string) ($selectedProfessional['nome'] ?? 'Profissional')) ?></span>
+                <span class="quick-tag service"><?= app_h((string) ($selectedService['nome'] ?? 'Servico em grupo')) ?></span>
+            </div>
+            <a class="btn btn-outline-primary quick-return" href="<?= app_h($quickLegacyUrl) ?>">Voltar para agenda de grupo</a>
+        </div>
+    </section>
+
+    <?php if (!$selectedService): ?>
+        <div class="alert alert-warning">Este profissional ainda nao tem servico de grupo vinculado.</div>
+    <?php else: ?>
+        <section class="quick-panel">
+            <form method="GET" id="quickScheduleForm" class="quick-builder">
+                <input type="hidden" name="modelo" value="rapido">
+                <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                <input type="hidden" name="service_id" value="<?= (int) $selectedServiceId ?>">
+                <input type="hidden" name="week_start" value="<?= app_h($weekStart) ?>">
+                <div class="quick-form-heading">
+                    <div>
+                        <h2>Montar cronograma rapido</h2>
+                        <p>Escolha a data de inicio, marque os dias da semana e gere a previa.</p>
+                    </div>
+                </div>
+                <div class="quick-form-grid">
+                    <div class="quick-field wide">
+                        <label for="quickPatientSearch">Paciente</label>
+                        <input type="hidden" name="paciente_id" id="quickPatientId" value="<?= (int) $quickPatientId ?>">
+                        <div class="quick-autocomplete">
+                            <input type="text" id="quickPatientSearch" class="form-control" autocomplete="off" value="<?= app_h((string) ($quickPatient['nome'] ?? '')) ?>" placeholder="Digite para buscar o paciente" required>
+                            <div class="quick-autocomplete-menu" id="quickPatientMenu"></div>
+                        </div>
+                    </div>
+                    <div class="quick-field wide">
+                        <label for="quickGuide">Guia autorizada</label>
+                        <select name="guia_id" id="quickGuide" class="form-select" required>
+                            <?php if ($quickGuides === []): ?>
+                                <option value="">Selecione o paciente</option>
+                            <?php else: ?>
+                                <option value="">Selecione a guia</option>
+                                <?php foreach ($quickGuides as $guideOption): ?>
+                                    <option value="<?= (int) $guideOption['id'] ?>" <?= (int) $quickGuideId === (int) $guideOption['id'] ? 'selected' : '' ?>>
+                                        <?= app_h(($guideOption['codigo'] ?: ('GUIA #' . $guideOption['id'])) . ' - restam ' . (int) $guideOption['restantes']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </select>
+                    </div>
+                    <div class="quick-field">
+                        <label for="quickStartDate">Data de inicio</label>
+                        <input type="date" name="data_inicio" id="quickStartDate" class="form-control" value="<?= app_h($quickStartDate) ?>" required>
+                    </div>
+                    <div class="quick-field">
+                        <label for="quickSessions">Quantidade</label>
+                        <input type="number" name="quantidade_sessoes" id="quickSessions" class="form-control" value="<?= (int) $quickSessions ?>" min="1" max="<?= (int) $quickSessionsLimit ?>" required>
+                    </div>
+                    <div class="quick-field">
+                        <label for="quickTime">Horario do grupo</label>
+                        <input type="time" name="hora_inicio" id="quickTime" class="form-control" value="<?= app_h($quickTime) ?>" required>
+                    </div>
+                    <div class="quick-field full">
+                        <span class="quick-days-label">Dias da semana</span>
+                        <div class="quick-days">
+                            <?php foreach (app_group_quick_weekday_labels() as $dayValue => $dayLabel): ?>
+                                <label class="quick-day-option">
+                                    <input type="checkbox" name="dias_semana[]" value="<?= (int) $dayValue ?>" <?= in_array((int) $dayValue, $quickWeekdays, true) ? 'checked' : '' ?>>
+                                    <span><?= app_h($dayLabel) ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <div class="quick-field full quick-actions">
+                        <button class="btn btn-primary" type="submit">Gerar previa</button>
+                    </div>
+                </div>
+            </form>
+        </section>
+
+        <?php if ($quickPatientId > 0 && $quickPatient): ?>
+            <section class="quick-panel quick-patient-agenda">
+                <div class="quick-preview-head">
+                    <div class="quick-preview-title">
+                        <h2>Agenda do paciente</h2>
+                        <p><?= app_h((string) $quickPatient['nome']) ?> - proximos agendamentos ativos a partir de <?= app_h(app_date_br(date('Y-m-d'))) ?>.</p>
+                    </div>
+                    <?php if ($quickPatientScheduleRows !== []): ?>
+                        <div class="quick-actions">
+                            <span class="quick-count"><?= count($quickPatientScheduleRows) ?> encontrado(s)</span>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <?php if ($quickPatientScheduleRows === []): ?>
+                    <div class="quick-empty">
+                        Nenhum agendamento futuro encontrado para este paciente. Voce pode montar novos horarios abaixo.
+                    </div>
+                <?php else: ?>
+                    <div class="quick-patient-calendar">
+                        <?php foreach ($quickPatientScheduleByMonth as $monthKey => $monthDays): ?>
+                            <div class="quick-agenda-month">
+                                <h3><?= app_h(app_month_label($monthKey)) ?></h3>
+                                <div class="quick-scheduled-days">
+                                    <?php foreach ($monthDays as $dateKey => $daySchedules): ?>
+                                        <?php $dayTimestamp = strtotime((string) $dateKey); ?>
+                                        <article class="quick-scheduled-day">
+                                            <div class="quick-scheduled-day-head">
+                                                <strong><?= app_h($dayTimestamp ? date('d', $dayTimestamp) : substr((string) $dateKey, -2)) ?></strong>
+                                                <span><?= app_h(app_date_br((string) $dateKey)) ?></span>
+                                            </div>
+                                            <?php foreach ($daySchedules as $scheduleRow): ?>
+                                                <?php
+                                                $scheduleType = (string) ($scheduleRow['tipo_agenda'] ?? 'individual');
+                                                $scheduleDate = (string) ($scheduleRow['data_agendamento'] ?? '');
+                                                $scheduleStart = app_time_br((string) ($scheduleRow['hora_inicio'] ?? ''));
+                                                $scheduleEnd = app_time_br((string) ($scheduleRow['hora_fim'] ?? ''));
+                                                $scheduleStatus = (string) ($scheduleRow['status'] ?? '');
+                                                $scheduleOpenUrl = $scheduleType === 'grupo'
+                                                    ? 'secretaria_agenda_grupo.php?' . app_build_query([
+                                                        'professional_id' => (int) ($scheduleRow['profissional_id'] ?? 0),
+                                                        'service_id' => (int) ($scheduleRow['servico_id'] ?? 0),
+                                                        'week_start' => app_week_start($scheduleDate),
+                                                        'group_id' => (int) ($scheduleRow['grupo_id'] ?? 0),
+                                                    ])
+                                                    : 'secretaria_agenda.php?' . app_build_query([
+                                                        'professional_id' => (int) ($scheduleRow['profissional_id'] ?? 0),
+                                                        'week_start' => app_week_start($scheduleDate),
+                                                        'appointment_id' => (int) ($scheduleRow['item_id'] ?? 0),
+                                                    ]);
+                                                ?>
+                                                <a class="quick-calendar-event is-<?= app_h($scheduleType) ?>" href="<?= app_h($scheduleOpenUrl) ?>">
+                                                    <strong><?= app_h($scheduleStart) ?> as <?= app_h($scheduleEnd) ?></strong>
+                                                    <span><?= app_h((string) ($scheduleRow['servico_nome'] ?: 'Servico nao informado')) ?></span>
+                                                    <small>
+                                                        <?= $scheduleType === 'grupo' ? 'Grupo' : 'Individual' ?>
+                                                        - <?= app_h((string) ($scheduleRow['profissional_nome'] ?: 'Profissional nao informado')) ?>
+                                                        - <?= app_h($groupStatuses[$scheduleStatus] ?? ucfirst($scheduleStatus ?: 'sem status')) ?>
+                                                    </small>
+                                                </a>
+                                            <?php endforeach; ?>
+                                        </article>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+        <?php endif; ?>
+
+        <?php if ($quickCanPreview || $quickConfirmed): ?>
+            <div class="quick-preview-trigger">
+                <div>
+                    <strong>Previa dos agendamentos</strong>
+                    <span>
+                        <?= $quickRows !== []
+                            ? count($quickRows) . ' sessao(oes) pronta(s) para revisar.'
+                            : 'Veja os avisos da previa antes de confirmar.' ?>
+                    </span>
+                </div>
+                <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#quickPreviewModal">Ver previa</button>
+            </div>
+        <?php endif; ?>
+    <?php endif; ?>
+</main>
+
+<?php if ($quickCanPreview || $quickConfirmed): ?>
+<div class="modal fade quick-preview-modal" id="quickPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title">Previa dos agendamentos</h5>
+                    <small class="text-muted">Calendario compacto somente com os dias em que o paciente vai vir.</small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+                <?php if (!empty($quickPreview['errors'])): ?>
+                    <div class="alert alert-warning"><?= app_h(implode(' ', $quickPreview['errors'])) ?></div>
+                <?php endif; ?>
+
+                <?php if (!empty($quickPreview['errors']) && $quickSkippedRows !== []): ?>
+                    <div class="quick-blocked">
+                        <strong>Datas que nao entraram na previa</strong>
+                        <ul>
+                            <?php foreach (array_slice($quickSkippedRows, 0, 6) as $blockedRow): ?>
+                                <?php $blockedReason = (string) ($blockedRow['reason'] ?? 'Nao foi possivel usar esta data.'); ?>
+                                <li>
+                                    <?= app_h(app_date_br((string) $blockedRow['date'])) ?>
+                                    as <?= app_h((string) $blockedRow['time']) ?>:
+                                    <?= app_h($blockedReason) ?>
+                                    <?= app_h(app_group_quick_reason_action($blockedReason)) ?>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($quickRows === []): ?>
+                    <div class="quick-empty">
+                        <?= !empty($quickPreview['errors'])
+                            ? 'Nenhuma data entrou na previa. Veja os motivos acima e ajuste a liberacao, o horario, os dias da semana ou a quantidade.'
+                            : 'Escolha o paciente, a guia, a data inicial e os dias da semana para gerar a previa.' ?>
+                    </div>
+                <?php else: ?>
+                    <div class="quick-calendar">
+                        <?php foreach ($quickRowsByMonth as $monthKey => $monthRows): ?>
+                            <div class="quick-month">
+                                <h3><?= app_h(app_month_label($monthKey)) ?></h3>
+                                <div class="quick-day-grid">
+                                    <?php foreach ($monthRows as $row): ?>
+                                        <?php
+                                        $timestamp = strtotime((string) $row['date']);
+                                        $isCreate = ($row['action'] ?? '') === 'Criar grupo';
+                                        ?>
+                                        <article class="quick-day-card<?= $isCreate ? ' is-create' : '' ?>">
+                                            <div class="quick-day-date">
+                                                <div>
+                                                    <strong><?= app_h(date('d', $timestamp)) ?></strong>
+                                                    <span><?= app_h(app_date_br((string) $row['date'])) ?></span>
+                                                </div>
+                                                <span class="quick-session">Sessao <?= (int) $row['session'] ?></span>
+                                            </div>
+                                            <div class="quick-card-main">
+                                                <strong><?= app_h((string) $row['time']) ?> as <?= app_h((string) $row['end_time']) ?></strong>
+                                                <span><?= app_h(app_group_quick_weekday_labels()[(int) $row['weekday']] ?? '') ?> - <?= (int) $row['used'] ?>/<?= (int) $row['capacity'] ?> ocupadas</span>
+                                            </div>
+                                            <span class="quick-chip <?= $isCreate ? 'create' : 'existing' ?>"><?= app_h((string) $row['action']) ?></span>
+                                        </article>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                <?php if ($quickConfirmed && $quickWhatsappUrl): ?>
+                    <a class="btn btn-success" href="<?= app_h($quickWhatsappUrl) ?>" target="_blank" rel="noopener noreferrer">Enviar grade ao paciente</a>
+                <?php elseif ($quickConfirmed): ?>
+                    <button class="btn btn-outline-secondary" type="button" disabled>Paciente sem WhatsApp</button>
+                <?php elseif ($quickRows !== [] && empty($quickPreview['errors'])): ?>
+                    <form method="POST" class="m-0">
+                        <input type="hidden" name="action" value="quick_schedule">
+                        <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                        <input type="hidden" name="service_id" value="<?= (int) $selectedServiceId ?>">
+                        <input type="hidden" name="week_start" value="<?= app_h($weekStart) ?>">
+                        <input type="hidden" name="paciente_id" value="<?= (int) $quickPatientId ?>">
+                        <input type="hidden" name="guia_id" value="<?= (int) $quickGuideId ?>">
+                        <input type="hidden" name="data_inicio" value="<?= app_h($quickStartDate) ?>">
+                        <input type="hidden" name="hora_inicio" value="<?= app_h($quickTime) ?>">
+                        <input type="hidden" name="quantidade_sessoes" value="<?= (int) $quickSessions ?>">
+                        <?php foreach ($quickWeekdays as $quickWeekday): ?>
+                            <input type="hidden" name="dias_semana[]" value="<?= (int) $quickWeekday ?>">
+                        <?php endforeach; ?>
+                        <button class="btn btn-success" type="submit">Confirmar cronograma</button>
+                    </form>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($quickFlash): ?>
+<div class="alert alert-<?= app_h($quickFlash['type']) ?> quick-inline-notice"><?= app_h($quickFlash['message']) ?></div>
+<?php endif; ?>
+
+<script>
+const quickPatientInput = document.getElementById('quickPatientSearch');
+const quickPatientId = document.getElementById('quickPatientId');
+const quickPatientMenu = document.getElementById('quickPatientMenu');
+const quickGuide = document.getElementById('quickGuide');
+const shouldOpenQuickPreviewModal = <?= ($quickCanPreview || $quickConfirmed) ? 'true' : 'false' ?>;
+let quickPatientController = null;
+
+function closeQuickPatientMenu() {
+    if (!quickPatientMenu) return;
+    quickPatientMenu.classList.remove('is-open');
+    quickPatientMenu.innerHTML = '';
+}
+
+function openQuickPatientAgenda(patientId) {
+    const form = document.getElementById('quickScheduleForm');
+    const url = new URL(window.location.origin + window.location.pathname);
+
+    url.searchParams.set('modelo', 'rapido');
+    url.searchParams.set('paciente_id', patientId);
+
+    ['professional_id', 'service_id', 'week_start', 'data_inicio', 'quantidade_sessoes', 'hora_inicio'].forEach((name) => {
+        const field = form?.querySelector(`[name="${name}"]`);
+        if (field?.value) {
+            url.searchParams.set(name, field.value);
+        }
+    });
+
+    form?.querySelectorAll('input[name="dias_semana[]"]:checked').forEach((checkbox) => {
+        url.searchParams.append('dias_semana[]', checkbox.value);
+    });
+
+    window.location.href = url.toString();
+}
+
+if (quickPatientInput && quickPatientId && quickPatientMenu) {
+    quickPatientInput.addEventListener('input', () => {
+        quickPatientId.value = '';
+        if (quickGuide) {
+            quickGuide.innerHTML = '<option value="">Selecione o paciente</option>';
+        }
+        const term = quickPatientInput.value.trim();
+
+        if (term.length < 2) {
+            closeQuickPatientMenu();
+            return;
+        }
+
+        quickPatientController?.abort();
+        quickPatientController = new AbortController();
+        fetch('pacientes_busca.php?q=' + encodeURIComponent(term), { signal: quickPatientController.signal })
+            .then((response) => response.json())
+            .then((data) => {
+                quickPatientMenu.innerHTML = '';
+                (data.pacientes || []).forEach((patient) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'quick-autocomplete-option';
+                    button.textContent = patient.nome;
+                    button.addEventListener('click', () => {
+                        quickPatientId.value = patient.id;
+                        quickPatientInput.value = patient.nome;
+                        closeQuickPatientMenu();
+                        openQuickPatientAgenda(patient.id);
+                    });
+                    quickPatientMenu.appendChild(button);
+                });
+                quickPatientMenu.classList.toggle('is-open', quickPatientMenu.children.length > 0);
+            })
+            .catch(() => {});
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!quickPatientMenu.contains(event.target) && event.target !== quickPatientInput) {
+            closeQuickPatientMenu();
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const quickPreviewModal = document.getElementById('quickPreviewModal');
+
+    if (shouldOpenQuickPreviewModal && quickPreviewModal && window.bootstrap) {
+        bootstrap.Modal.getOrCreateInstance(quickPreviewModal).show();
+    }
+});
+</script>
+</body>
+</html>
+    <?php
+    exit;
 }
 
 $weekDays = app_week_days($weekStart);
@@ -1587,7 +2996,9 @@ $professionalWhatsappPhone = app_normalize_phone((string) ($selectedProfessional
                                 $clinicId,
                                 (int) $member['paciente_id'],
                                 $selectedProfessionalId,
-                                (int) ($member['atendimento_id'] ?? 0)
+                                (int) ($member['atendimento_id'] ?? 0),
+                                (int) $member['id'],
+                                $selectedServiceId
                             );
                             $patientWhatsappUrl = app_group_patient_whatsapp_link($member, $modalDate, $modalTime, $modalProfessionalName, $modalServiceName);
                             ?>

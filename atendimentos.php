@@ -267,7 +267,7 @@ if ($shouldLoadAttendances) {
     $attendanceRows = app_stmt_all(
         $conn,
         'SELECT a.*, p.nome AS paciente_nome, g.codigo AS guia_codigo,
-                pl.nome AS plano_nome, pl.valor_sessao
+                pl.nome AS plano_nome
          FROM atendimentos a
          LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.clinica_id = a.clinica_id
          LEFT JOIN guias g ON g.id = a.guia_id AND g.clinica_id = a.clinica_id

@@ -90,7 +90,7 @@ final class StressDataSeeder
 
     private function loadReferenceData(): void
     {
-        $this->plans = $this->fetchAll('SELECT id, nome, valor_sessao FROM planos ORDER BY id');
+        $this->plans = $this->fetchAll('SELECT id, nome FROM planos ORDER BY id');
 
         if ($this->plans === []) {
             throw new RuntimeException('Nenhum plano encontrado para montar a carga.');
@@ -364,9 +364,9 @@ final class StressDataSeeder
         $patientStmt = $this->pdo->prepare('INSERT INTO pacientes (nome, telefone, convenio, valor_sessao, prontuario, dia_preferencia, horario_preferencia) VALUES (?, ?, ?, ?, ?, ?, ?)');
         $guideStmt = $this->pdo->prepare(
             'INSERT INTO guias
-                (codigo, paciente_id, total_sessoes, data_envio, previsao_pagamento, valor_guia, recebido, data, plano_id, sessoes_usadas, profissional_id, tipo_guia, lote_id, convenio, conta_receber_gerada, conta_receber_id, observacoes)
+                (codigo, paciente_id, total_sessoes, data_envio, previsao_pagamento, valor_guia, recebido, data, plano_id, sessoes_usadas, profissional_id, servico_id, tipo_guia, lote_id, convenio, conta_receber_gerada, conta_receber_id, observacoes)
              VALUES
-                (?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, 0, NULL, ?)'
+                (?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, 0, NULL, ?)'
         );
 
         $batchCounter = 0;
@@ -374,11 +374,13 @@ final class StressDataSeeder
         for ($i = 1; $i <= $count; $i++) {
             $type = $typeSequence[$i - 1];
             $professional = $professionals[($i - 1) % count($professionals)];
+            $servicePool = $this->serviceMapByProfessional[(int) $professional['id']] ?? [];
+            $guideService = $servicePool !== [] ? $servicePool[array_rand($servicePool)] : ['id' => null, 'nome' => ''];
             $plan = $this->pickPlanForType($type);
             $name = $this->composeName($i + 100, $firstNames, $lastNamesA, $lastNamesB);
             $phone = $this->formatPhone(930000000 + $i * 29);
             $sessions = $this->sessionsForGuideType($type);
-            $perSessionValue = $this->sessionValueForPlan($plan, $type);
+            $perSessionValue = $this->sessionValueForService($guideService, $type);
             $totalValue = round($perSessionValue * $sessions, 2);
             $guideDate = $this->randomDate($this->startDate, $this->today->modify('-5 days'));
             $sendDate = $guideDate->modify('+' . mt_rand(2, 24) . ' days');
@@ -415,14 +417,19 @@ final class StressDataSeeder
             $guideStmt->bindValue(7, $guideDate->format('Y-m-d'));
             $guideStmt->bindValue(8, (int) $plan['id'], PDO::PARAM_INT);
             $guideStmt->bindValue(9, (int) $professional['id'], PDO::PARAM_INT);
-            $guideStmt->bindValue(10, $type);
-            if ($loteId === null) {
-                $guideStmt->bindValue(11, null, PDO::PARAM_NULL);
+            if (empty($guideService['id'])) {
+                $guideStmt->bindValue(10, null, PDO::PARAM_NULL);
             } else {
-                $guideStmt->bindValue(11, $loteId, PDO::PARAM_INT);
+                $guideStmt->bindValue(10, (int) $guideService['id'], PDO::PARAM_INT);
             }
-            $guideStmt->bindValue(12, $convenio);
-            $guideStmt->bindValue(13, $guideNote);
+            $guideStmt->bindValue(11, $type);
+            if ($loteId === null) {
+                $guideStmt->bindValue(12, null, PDO::PARAM_NULL);
+            } else {
+                $guideStmt->bindValue(12, $loteId, PDO::PARAM_INT);
+            }
+            $guideStmt->bindValue(13, $convenio);
+            $guideStmt->bindValue(14, $guideNote);
             $guideStmt->execute();
 
             $guideId = (int) $this->pdo->lastInsertId();
@@ -441,6 +448,7 @@ final class StressDataSeeder
                 'patient_name' => $name,
                 'patient_phone' => $phone,
                 'professional_id' => (int) $professional['id'],
+                'service_id' => (int) ($guideService['id'] ?? 0),
                 'type' => $type,
                 'plan_id' => (int) $plan['id'],
                 'plan_name' => (string) $plan['nome'],
@@ -732,6 +740,12 @@ final class StressDataSeeder
                     $guideId = $this->patientGuideMap[$patientId];
                     $guide = &$this->guideStates[$guideId];
                     $service = $servicePool[$slotIndex % count($servicePool)];
+                    foreach ($servicePool as $candidateService) {
+                        if ((int) $candidateService['id'] === (int) ($guide['service_id'] ?? 0)) {
+                            $service = $candidateService;
+                            break;
+                        }
+                    }
 
                     if ($status === 'realizado' && $guide['used_sessions'] >= $guide['total_sessions']) {
                         $status = mt_rand(0, 1) === 0 ? 'cancelado' : 'confirmado';
@@ -882,11 +896,17 @@ final class StressDataSeeder
         };
     }
 
-    private function sessionValueForPlan(array $plan, string $type): float
+    private function sessionValueForService(array $service, string $type): float
     {
-        $base = (float) ($plan['valor_sessao'] ?? 0);
-        if ($base <= 0) {
-            $base = $type === 'particular' ? 150.0 : 60.0;
+        $base = $type === 'particular' ? 150.0 : 60.0;
+        $serviceName = (string) ($service['nome'] ?? '');
+
+        if (stripos($serviceName, 'home') !== false) {
+            $base += 55.0;
+        } elseif (stripos($serviceName, 'rpg') !== false || stripos($serviceName, 'pilates') !== false) {
+            $base += 25.0;
+        } elseif (stripos($serviceName, 'avaliacao') !== false || stripos($serviceName, 'consulta') !== false) {
+            $base += 35.0;
         }
 
         $factor = match ($type) {

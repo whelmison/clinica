@@ -14,6 +14,7 @@ $selectedPatient = null;
 $isPatientPost = app_request_method() === 'POST';
 $patientFilters = [
     'paciente' => trim((string) ($isPatientPost ? app_request_post('filter_paciente', '') : app_request_query('paciente', ''))),
+    'paciente_id' => (int) ($isPatientPost ? app_post_int('filter_paciente_id') : app_query_int('paciente_id')),
     'plano' => trim((string) ($isPatientPost ? app_request_post('filter_plano', '') : app_request_query('plano', ''))),
     'status' => trim((string) ($isPatientPost ? app_request_post('filter_status', '') : app_request_query('status', ''))),
 ];
@@ -26,6 +27,7 @@ if (!function_exists('app_patient_filter_query')) {
     {
         return app_build_query([
             'paciente' => $filters['paciente'] ?? '',
+            'paciente_id' => (int) ($filters['paciente_id'] ?? 0) > 0 ? (int) $filters['paciente_id'] : '',
             'plano' => $filters['plano'] ?? '',
             'status' => $filters['status'] ?? '',
             'filtrar' => 1,

@@ -82,6 +82,63 @@ body {
     font-size: 0.78rem;
 }
 
+.patient-autocomplete-wrap {
+    position: relative;
+}
+
+.patient-autocomplete-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    z-index: 1050;
+    display: none;
+    max-height: 260px;
+    overflow: auto;
+    padding: 0.28rem;
+    border: 1px solid rgba(18, 73, 88, 0.14);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 14px 32px rgba(22, 51, 63, 0.16);
+}
+
+.patient-autocomplete-menu.is-open {
+    display: grid;
+    gap: 0.18rem;
+}
+
+.patient-autocomplete-option {
+    width: 100%;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #1d3945;
+    text-align: left;
+    padding: 0.42rem 0.48rem;
+}
+
+.patient-autocomplete-option:hover,
+.patient-autocomplete-option:focus,
+.patient-autocomplete-option.is-active {
+    background: rgba(15, 92, 74, 0.1);
+    outline: none;
+}
+
+.patient-autocomplete-name {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.15;
+}
+
+.patient-autocomplete-meta {
+    display: block;
+    margin-top: 0.12rem;
+    color: #68828f;
+    font-size: 0.68rem;
+    line-height: 1.15;
+}
+
 .patient-list-panel,
 .patient-alert-card {
     margin-top: 0.6rem;
@@ -535,7 +592,11 @@ body {
 <form method="GET" id="patientFilterForm" class="row g-2 align-items-end">
 <div class="col-md-5">
 <label class="form-label small text-muted">Paciente</label>
-<input type="text" name="paciente" class="form-control" placeholder="Digite o nome" autocomplete="off" value="<?= app_h($patientFilters['paciente'] ?? '') ?>">
+<input type="hidden" name="paciente_id" id="patientFilterPacienteId" value="<?= (int) ($patientFilters['paciente_id'] ?? 0) > 0 ? (int) $patientFilters['paciente_id'] : '' ?>">
+<div class="patient-autocomplete-wrap">
+<input type="text" name="paciente" id="patientFilterPacienteBusca" class="form-control" placeholder="Nome, CPF, contato ou nascimento" autocomplete="off" value="<?= app_h($patientFilters['paciente'] ?? '') ?>">
+<div class="patient-autocomplete-menu" id="patientFilterPacienteMenu"></div>
+</div>
 </div>
 <div class="col-md-4">
 <label class="form-label small text-muted">Plano</label>
@@ -714,6 +775,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os paci
                     <?php endif; ?>
                     <input type="hidden" name="action" value="save_patient">
                     <input type="hidden" name="filter_paciente" value="<?= app_h($patientFilters['paciente'] ?? '') ?>">
+                    <input type="hidden" name="filter_paciente_id" value="<?= (int) ($patientFilters['paciente_id'] ?? 0) > 0 ? (int) $patientFilters['paciente_id'] : '' ?>">
                     <input type="hidden" name="filter_plano" value="<?= app_h($patientFilters['plano'] ?? '') ?>">
                     <input type="hidden" name="filter_status" value="<?= app_h($patientFilters['status'] ?? '') ?>">
                     <input type="hidden" name="filter_filtrar" value="<?= $shouldLoadPatients ? '1' : '' ?>">
@@ -945,6 +1007,204 @@ function showPatientSavePopup(message) {
 }
 
 setupPatientSavePopup(document.querySelector('[data-patient-save-popup]'));
+
+const patientFilterForm = document.getElementById('patientFilterForm');
+const patientFilterInput = document.getElementById('patientFilterPacienteBusca');
+const patientFilterMenu = document.getElementById('patientFilterPacienteMenu');
+const patientFilterId = document.getElementById('patientFilterPacienteId');
+
+function closePatientFilterMenu() {
+    if (!patientFilterMenu) {
+        return;
+    }
+
+    patientFilterMenu.classList.remove('is-open');
+    patientFilterMenu.innerHTML = '';
+}
+
+function submitPatientFilter() {
+    if (!patientFilterForm) {
+        return;
+    }
+
+    if (typeof patientFilterForm.requestSubmit === 'function') {
+        patientFilterForm.requestSubmit();
+        return;
+    }
+
+    patientFilterForm.submit();
+}
+
+function setupPatientFilterAutocomplete() {
+    if (!patientFilterForm || !patientFilterInput || !patientFilterMenu || !patientFilterId) {
+        return;
+    }
+
+    let timer = null;
+    let controller = null;
+    let results = [];
+    let activeIndex = -1;
+
+    function setActiveOption(nextIndex) {
+        const options = Array.from(patientFilterMenu.querySelectorAll('.patient-autocomplete-option'));
+
+        if (!options.length) {
+            activeIndex = -1;
+            return;
+        }
+
+        activeIndex = (nextIndex + options.length) % options.length;
+
+        options.forEach((option, index) => {
+            option.classList.toggle('is-active', index === activeIndex);
+            option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+        });
+
+        options[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function choosePatient(patient) {
+        if (!patient) {
+            return;
+        }
+
+        patientFilterInput.value = patient.nome || '';
+        patientFilterId.value = String(patient.id || '');
+        closePatientFilterMenu();
+        submitPatientFilter();
+    }
+
+    function renderMenu(items) {
+        results = items;
+        activeIndex = -1;
+        patientFilterMenu.innerHTML = '';
+
+        if (!items.length) {
+            closePatientFilterMenu();
+            return;
+        }
+
+        items.forEach((patient, index) => {
+            const button = document.createElement('button');
+            const name = document.createElement('span');
+            const meta = document.createElement('span');
+            const metaParts = [];
+
+            button.type = 'button';
+            button.className = 'patient-autocomplete-option';
+            button.setAttribute('role', 'option');
+            button.setAttribute('aria-selected', 'false');
+
+            name.className = 'patient-autocomplete-name';
+            name.textContent = patient.nome || '';
+            button.appendChild(name);
+
+            if (patient.cpf) {
+                metaParts.push('CPF/CNPJ: ' + patient.cpf);
+            }
+
+            if (patient.data_nascimento) {
+                metaParts.push('Nasc.: ' + patient.data_nascimento);
+            }
+
+            if (patient.telefone) {
+                metaParts.push('Contato: ' + patient.telefone);
+            }
+
+            if (metaParts.length) {
+                meta.className = 'patient-autocomplete-meta';
+                meta.textContent = metaParts.join(' | ');
+                button.appendChild(meta);
+            }
+
+            button.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+            });
+
+            button.addEventListener('click', () => {
+                choosePatient(results[index]);
+            });
+
+            patientFilterMenu.appendChild(button);
+        });
+
+        patientFilterMenu.classList.add('is-open');
+    }
+
+    patientFilterInput.addEventListener('input', () => {
+        const term = patientFilterInput.value.trim();
+        patientFilterId.value = '';
+        window.clearTimeout(timer);
+
+        if (term.length < 2) {
+            if (controller) {
+                controller.abort();
+            }
+
+            closePatientFilterMenu();
+            return;
+        }
+
+        timer = window.setTimeout(async () => {
+            if (controller) {
+                controller.abort();
+            }
+
+            controller = new AbortController();
+
+            try {
+                const response = await fetch('pacientes_busca.php?q=' + encodeURIComponent(term), {
+                    signal: controller.signal
+                });
+                const data = await response.json();
+                renderMenu(data.pacientes || []);
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    closePatientFilterMenu();
+                }
+            }
+        }, 160);
+    });
+
+    patientFilterInput.addEventListener('keydown', (event) => {
+        const isOpen = patientFilterMenu.classList.contains('is-open');
+
+        if (event.key === 'ArrowDown' && results.length) {
+            event.preventDefault();
+
+            if (!isOpen) {
+                patientFilterMenu.classList.add('is-open');
+            }
+
+            setActiveOption(activeIndex + 1);
+            return;
+        }
+
+        if (event.key === 'ArrowUp' && results.length) {
+            event.preventDefault();
+            setActiveOption(activeIndex <= 0 ? results.length - 1 : activeIndex - 1);
+            return;
+        }
+
+        if (event.key === 'Enter' && isOpen && activeIndex >= 0) {
+            event.preventDefault();
+            choosePatient(results[activeIndex]);
+            return;
+        }
+
+        if (event.key === 'Escape') {
+            closePatientFilterMenu();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!patientFilterMenu.contains(event.target) && event.target !== patientFilterInput) {
+            closePatientFilterMenu();
+        }
+    });
+}
+
+setupPatientFilterAutocomplete();
 
 function onlyDigits(value) {
     return String(value || '').replace(/\D+/g, '');

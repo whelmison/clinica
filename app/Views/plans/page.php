@@ -172,7 +172,7 @@ body {
         <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-end">
             <div>
                 <h3 class="mb-2">Planos</h3>
-                <p>Cadastre, filtre e acompanhe os valores padrao de sessao em um fluxo alinhado ao restante do sistema.</p>
+                <p>Cadastre e filtre os planos usados nos precos dos servicos e nas guias.</p>
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <button type="button" class="btn btn-success btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#planCreateModal">+ Novo plano</button>
@@ -207,7 +207,6 @@ body {
                     <thead>
                     <tr>
                         <th>Plano</th>
-                        <th>Valor da sessao</th>
                         <th class="text-end">Acoes</th>
                     </tr>
                     </thead>
@@ -217,9 +216,6 @@ body {
                             <td>
                                 <div class="plan-name"><?= app_h((string) $plan['nome']) ?></div>
                                 <div class="small text-muted">Plano cadastrado no catalogo administrativo</div>
-                            </td>
-                            <td>
-                                <span class="plan-value"><?= app_money_br((float) $plan['valor_sessao']) ?></span>
                             </td>
                             <td class="text-end">
                                 <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
@@ -234,7 +230,7 @@ body {
                     <?php endforeach; ?>
                     <?php if ($plansRows === []): ?>
                         <tr>
-                            <td colspan="3" class="text-center py-4 text-muted">
+                            <td colspan="2" class="text-center py-4 text-muted">
                                 Nenhum plano encontrado para os filtros informados.
                                 <div class="mt-2">
                                     <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#planCreateModal">Cadastrar primeiro plano</button>
@@ -265,17 +261,13 @@ body {
                 <form method="POST" class="plans-form">
                     <input type="hidden" name="action" value="save_plan">
                     <div class="row g-3">
-                        <div class="col-md-8">
-                            <label class="form-label small text-muted">Nome do plano</label>
-                            <input type="text" name="nome" class="form-control" data-page-autofocus="1" value="<?= app_h($formValues['nome']) ?>" placeholder="Ex.: Unimed, Bradesco, particular" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small text-muted">Valor da sessao</label>
-                            <input type="text" name="valor_sessao" class="form-control" inputmode="decimal" value="<?= app_h($formValues['valor_sessao']) ?>" placeholder="R$ 0,00" required>
-                        </div>
+                                <div class="col-12">
+                                    <label class="form-label small text-muted">Nome do plano</label>
+                                    <input type="text" name="nome" class="form-control" data-page-autofocus="1" value="<?= app_h($formValues['nome']) ?>" placeholder="Ex.: Unimed, Bradesco, Plansaude" required>
+                                </div>
                     </div>
                     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mt-3">
-                        <span class="plans-note">Mantenha um nome claro e o valor padrao usado no faturamento.</span>
+                        <span class="plans-note">Os valores ficam na aba Precos do cadastro de servicos.</span>
                         <div class="d-flex gap-2">
                             <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
                             <button class="btn btn-primary px-4">Salvar plano</button>

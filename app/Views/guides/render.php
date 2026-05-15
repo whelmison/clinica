@@ -96,6 +96,7 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
             $isSelected = $selectedId !== null && (int) $guide['id'] === $selectedId;
             $status = guide_status_data($guide);
             $usedSessions = (int) ($guide['total_atendimentos'] ?? 0);
+            $lockedForEdit = $usedSessions > 0 || $status['value'] === 'finalizada';
             $totalSessions = max(0, (int) ($guide['total_sessoes'] ?? 0));
             $sessionsLabel = $usedSessions . '/' . $totalSessions;
             $editQuery = guide_filters_query($filters, [
@@ -111,6 +112,7 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
                 <div class="guide-muted-cell"><?= app_h($guide['profissional_nome'] ?: 'Profissional nao informado') ?></div>
                 <div>
                     <span class="guide-pill <?= app_h($status['class']) ?>"><?= app_h($sessionsLabel) ?></span>
+                    <small><?= app_h($guide['servico_nome'] ?: 'Servico nao informado') ?></small>
                     <small><?= app_h($status['label']) ?> | <?= (int) ($guide['autorizada'] ?? 0) === 1 ? 'Autorizada' : 'Nao autorizada' ?></small>
                 </div>
                 <div>
@@ -122,7 +124,7 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
                     <span><?= app_date_br($guide['data']) ?></span>
                 </div>
                 <div class="guide-action-cell">
-                    <span>Editar</span>
+                    <span><?= $lockedForEdit ? 'Bloqueada' : 'Editar' ?></span>
                 </div>
             </a>
         <?php endforeach; ?>

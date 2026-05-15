@@ -30,7 +30,7 @@ final class PlanRepository
         $pagination = app_pagination($page, $perPage, $total, 'planos.php', $paginationQuery, 'plan_page');
 
         $stmt = $this->pdo->prepare(
-            'SELECT id, nome, valor_sessao
+            'SELECT id, nome
              FROM planos' . $whereSql . '
              ORDER BY nome ASC, id DESC
              LIMIT :limit OFFSET :offset'
@@ -55,8 +55,8 @@ final class PlanRepository
         [$whereSql, $params] = $this->buildWhere($filters);
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(*) AS total,
-                    COALESCE(AVG(valor_sessao), 0) AS media,
-                    COALESCE(MAX(valor_sessao), 0) AS maior
+                    0 AS media,
+                    0 AS maior
              FROM planos' . $whereSql
         );
         $stmt->execute($params);
@@ -71,7 +71,7 @@ final class PlanRepository
     public function find(int $planId): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, nome, valor_sessao
+            'SELECT id, nome
              FROM planos
              WHERE clinica_id = :clinic_id AND id = :id
              LIMIT 1'
@@ -86,12 +86,11 @@ final class PlanRepository
     {
         $stmt = $this->pdo->prepare(
             'INSERT INTO planos (clinica_id, nome, valor_sessao)
-             VALUES (:clinic_id, :nome, :valor_sessao)'
+             VALUES (:clinic_id, :nome, 0)'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
             ':nome' => $data['nome'],
-            ':valor_sessao' => $data['valor_sessao'],
         ]);
 
         return (int) $this->pdo->lastInsertId();
@@ -101,15 +100,13 @@ final class PlanRepository
     {
         $stmt = $this->pdo->prepare(
             'UPDATE planos
-             SET nome = :nome,
-                 valor_sessao = :valor_sessao
+             SET nome = :nome
              WHERE clinica_id = :clinic_id AND id = :id'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
             ':id' => $planId,
             ':nome' => $data['nome'],
-            ':valor_sessao' => $data['valor_sessao'],
         ]);
     }
 

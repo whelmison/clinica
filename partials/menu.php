@@ -19,6 +19,33 @@ if (!function_exists('menuDropdownAtivo')) {
     }
 }
 
+if (!function_exists('menuHrefPage')) {
+    function menuHrefPage(string $href): string
+    {
+        return basename((string) parse_url($href, PHP_URL_PATH));
+    }
+}
+
+if (!function_exists('menuChildAtivo')) {
+    function menuChildAtivo(array $child, string $paginaAtual): string
+    {
+        $hrefPage = menuHrefPage((string) ($child['href'] ?? ''));
+
+        if (array_key_exists('tab', $child)) {
+            $currentTab = (string) ($_GET['tab'] ?? '');
+            $expectedTab = (string) $child['tab'];
+
+            if ($expectedTab === '') {
+                return $paginaAtual === $hrefPage && ($currentTab === '' || $currentTab === 'servicos') ? 'active' : '';
+            }
+
+            return $paginaAtual === $hrefPage && $currentTab === $expectedTab ? 'active' : '';
+        }
+
+        return menuAtivo($child['pages'] ?? [$hrefPage], $paginaAtual);
+    }
+}
+
 if (!function_exists('menuPaginaPermitida')) {
     function menuPaginaPermitida(string $pagina, array $accessMap): bool
     {
@@ -44,7 +71,7 @@ if (!function_exists('menuFiltrarPorPermissao')) {
                 $children = [];
 
                 foreach ($link['children'] as $child) {
-                    if (menuPaginaPermitida(basename($child['href']), $accessMap)) {
+                    if (menuPaginaPermitida(menuHrefPage($child['href']), $accessMap)) {
                         $children[] = $child;
                     }
                 }
@@ -55,7 +82,7 @@ if (!function_exists('menuFiltrarPorPermissao')) {
 
                 $link['children'] = $children;
 
-                if (!menuPaginaPermitida(basename($link['href']), $accessMap)) {
+                if (!menuPaginaPermitida(menuHrefPage($link['href']), $accessMap)) {
                     $link['href'] = $children[0]['href'];
                 }
 
@@ -63,7 +90,7 @@ if (!function_exists('menuFiltrarPorPermissao')) {
                 continue;
             }
 
-            if (menuPaginaPermitida(basename($link['href']), $accessMap)) {
+            if (menuPaginaPermitida(menuHrefPage($link['href']), $accessMap)) {
                 $filtered[] = $link;
             }
         }
@@ -94,7 +121,15 @@ $linksPorPerfil = [
                 ['label' => 'Relatorio da agenda', 'href' => 'agenda_relatorio_gerencial.php', 'pages' => ['agenda_relatorio_gerencial.php']],
             ],
         ],
-        ['label' => 'Servicos', 'href' => 'secretaria_servicos.php', 'pages' => ['secretaria_servicos.php', 'novo_servico.php', 'editar_servico.php']],
+        [
+            'label' => 'Servicos',
+            'href' => 'secretaria_servicos.php',
+            'pages' => ['secretaria_servicos.php', 'novo_servico.php', 'editar_servico.php'],
+            'children' => [
+                ['label' => 'Cadastro de servicos', 'href' => 'secretaria_servicos.php', 'pages' => ['secretaria_servicos.php', 'novo_servico.php', 'editar_servico.php'], 'tab' => ''],
+                ['label' => 'Relatorio de precos', 'href' => 'secretaria_servicos.php?tab=precos', 'pages' => ['secretaria_servicos.php'], 'tab' => 'precos'],
+            ],
+        ],
         ['label' => 'Profissionais', 'href' => 'administrativo_profissionais.php', 'pages' => ['administrativo_profissionais.php', 'novo_profissional.php', 'editar_profissional.php']],
         ['label' => 'Atendimentos', 'href' => 'atendimentos.php', 'pages' => ['atendimentos.php', 'novo_atendimento.php', 'editar_atendimento.php']],
         ['label' => 'Guias', 'href' => 'guias.php', 'pages' => ['guias.php', 'nova_guia.php', 'editar_guia.php', 'gestao_guias.php']],
@@ -211,7 +246,7 @@ $canEditClinic = menuPaginaPermitida('administrativo_clinica.php', $accessMapMen
 <a class="nav-link dropdown-toggle <?= menuDropdownAtivo($link, $paginaAtual) ?>" href="<?= app_h($link['href']) ?>" role="button" data-bs-toggle="dropdown" aria-expanded="false"><?= app_h($link['label']) ?></a>
 <ul class="dropdown-menu">
 <?php foreach ($link['children'] as $child): ?>
-<li><a class="dropdown-item <?= menuAtivo($child['pages'] ?? [basename($child['href'])], $paginaAtual) ?>" href="<?= app_h($child['href']) ?>"><?= app_h($child['label']) ?></a></li>
+<li><a class="dropdown-item <?= menuChildAtivo($child, $paginaAtual) ?>" href="<?= app_h($child['href']) ?>"><?= app_h($child['label']) ?></a></li>
 <?php endforeach; ?>
 </ul>
 </li>

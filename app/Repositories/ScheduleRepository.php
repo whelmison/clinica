@@ -131,7 +131,7 @@ final class ScheduleRepository
         return $row ?: null;
     }
 
-    public function findActiveGuideForAttendance(int $guideId, int $patientId, int $professionalId, ?int $ignoreAttendanceId = null): ?array
+    public function findActiveGuideForAttendance(int $guideId, int $patientId, int $professionalId, int $serviceId = 0, ?int $ignoreAttendanceId = null): ?array
     {
         $attendanceWhere = '';
         $clinicId = $this->clinicId();
@@ -142,6 +142,12 @@ final class ScheduleRepository
             ':patient_id' => $patientId,
             ':professional_id' => $professionalId,
         ];
+        $serviceWhere = '';
+
+        if ($serviceId > 0) {
+            $serviceWhere = 'AND (g.servico_id = :service_id OR g.servico_id IS NULL)';
+            $params[':service_id'] = $serviceId;
+        }
 
         if ($ignoreAttendanceId !== null && $ignoreAttendanceId > 0) {
             $attendanceWhere = 'WHERE id <> :ignore_attendance_id';
@@ -153,6 +159,7 @@ final class ScheduleRepository
                     g.codigo,
                     g.paciente_id,
                     g.profissional_id,
+                    g.servico_id,
                     g.autorizada,
                     g.total_sessoes,
                     COALESCE(pl.nome, \'\') AS plano_nome,
@@ -169,6 +176,7 @@ final class ScheduleRepository
                AND g.id = :guide_id
                AND g.paciente_id = :patient_id
                AND (g.profissional_id = :professional_id OR g.profissional_id IS NULL)
+               ' . $serviceWhere . '
                AND g.autorizada = 1
               AND COALESCE(g.status_operacional, \'aguardando_autorizacao\') NOT IN (\'cancelada\', \'finalizada\')
              LIMIT 1'
@@ -739,6 +747,51 @@ final class ScheduleRepository
         return (int) $this->pdo->lastInsertId();
     }
 
+    public function mergeAvailabilityRange(array $data): int
+    {
+        $ranges = $this->availabilityRangesTouching(
+            (int) $data['profissional_id'],
+            (string) $data['data_disponivel'],
+            (string) $data['hora_inicio'],
+            (string) $data['hora_fim']
+        );
+
+        if ($ranges === []) {
+            return $this->createAvailability($data);
+        }
+
+        $mergedStart = (string) $data['hora_inicio'];
+        $mergedEnd = (string) $data['hora_fim'];
+        $keep = $ranges[0];
+
+        foreach ($ranges as $range) {
+            if (strtotime('2000-01-01 ' . $range['hora_inicio']) < strtotime('2000-01-01 ' . $mergedStart)) {
+                $mergedStart = (string) $range['hora_inicio'];
+            }
+
+            if (strtotime('2000-01-01 ' . $range['hora_fim']) > strtotime('2000-01-01 ' . $mergedEnd)) {
+                $mergedEnd = (string) $range['hora_fim'];
+            }
+        }
+
+        $this->updateAvailability((int) $keep['id'], [
+            'profissional_id' => (int) $data['profissional_id'],
+            'data_disponivel' => (string) $data['data_disponivel'],
+            'hora_inicio' => $mergedStart,
+            'hora_fim' => $mergedEnd,
+            'observacoes' => trim((string) ($data['observacoes'] ?? '')) !== ''
+                ? (string) $data['observacoes']
+                : (string) ($keep['observacoes'] ?? ''),
+            'ativo' => 1,
+        ]);
+
+        foreach (array_slice($ranges, 1) as $range) {
+            $this->deleteAvailability((int) $range['id']);
+        }
+
+        return (int) $keep['id'];
+    }
+
     public function updateAvailability(int $availabilityId, array $data): void
     {
         $stmt = $this->pdo->prepare(
@@ -767,6 +820,131 @@ final class ScheduleRepository
     {
         $stmt = $this->pdo->prepare('DELETE FROM agenda_disponibilidade WHERE clinica_id = :clinic_id AND id = :id');
         $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $availabilityId]);
+    }
+
+    public function countAppointmentsInRange(int $professionalId, string $date, string $startTime, string $endTime): int
+    {
+        return count($this->appointmentRangesInRange($professionalId, $date, $startTime, $endTime));
+    }
+
+    public function appointmentRangesInRange(int $professionalId, string $date, string $startTime, string $endTime): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT hora_inicio, hora_fim
+             FROM agenda
+             WHERE clinica_id = :clinic_id
+               AND profissional_id = :professional_id
+               AND data_agendamento = :data_agendamento
+               AND status <> :status_cancelado
+               AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)
+             ORDER BY hora_inicio'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_agendamento' => $date,
+            ':status_cancelado' => 'cancelado',
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ]);
+        $ranges = $stmt->fetchAll();
+
+        $tableStmt = $this->pdo->query("SHOW TABLES LIKE 'agenda_grupos'");
+        if (!$tableStmt || !$tableStmt->fetchColumn()) {
+            return $ranges;
+        }
+
+        $groupStmt = $this->pdo->prepare(
+            'SELECT hora_inicio, hora_fim
+             FROM agenda_grupos
+             WHERE clinica_id = :clinic_id
+               AND profissional_id = :professional_id
+               AND data_agendamento = :data_agendamento
+               AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)
+             ORDER BY hora_inicio'
+        );
+        $groupStmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_agendamento' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ]);
+
+        $ranges = array_merge($ranges, $groupStmt->fetchAll());
+        usort(
+            $ranges,
+            static fn (array $left, array $right): int => strcmp((string) $left['hora_inicio'], (string) $right['hora_inicio'])
+        );
+
+        return $ranges;
+    }
+
+    public function removeAvailabilityRange(int $professionalId, string $date, string $startTime, string $endTime): int
+    {
+        $ranges = $this->availabilityRangesOverlapping($professionalId, $date, $startTime, $endTime);
+        $changed = 0;
+
+        foreach ($ranges as $range) {
+            $currentStart = (string) $range['hora_inicio'];
+            $currentEnd = (string) $range['hora_fim'];
+            $removeStart = max(strtotime('2000-01-01 ' . $startTime), strtotime('2000-01-01 ' . $currentStart));
+            $removeEnd = min(strtotime('2000-01-01 ' . $endTime), strtotime('2000-01-01 ' . $currentEnd));
+            $currentStartTs = strtotime('2000-01-01 ' . $currentStart);
+            $currentEndTs = strtotime('2000-01-01 ' . $currentEnd);
+
+            if ($removeStart <= $currentStartTs && $removeEnd >= $currentEndTs) {
+                $this->deleteAvailability((int) $range['id']);
+                $changed++;
+                continue;
+            }
+
+            if ($removeStart > $currentStartTs && $removeEnd < $currentEndTs) {
+                $this->updateAvailability((int) $range['id'], [
+                    'profissional_id' => $professionalId,
+                    'data_disponivel' => $date,
+                    'hora_inicio' => $currentStart,
+                    'hora_fim' => date('H:i:s', $removeStart),
+                    'observacoes' => (string) ($range['observacoes'] ?? ''),
+                    'ativo' => 1,
+                ]);
+                $this->createAvailability([
+                    'profissional_id' => $professionalId,
+                    'data_disponivel' => $date,
+                    'hora_inicio' => date('H:i:s', $removeEnd),
+                    'hora_fim' => $currentEnd,
+                    'observacoes' => (string) ($range['observacoes'] ?? ''),
+                    'ativo' => 1,
+                ]);
+                $changed++;
+                continue;
+            }
+
+            if ($removeStart <= $currentStartTs) {
+                $this->updateAvailability((int) $range['id'], [
+                    'profissional_id' => $professionalId,
+                    'data_disponivel' => $date,
+                    'hora_inicio' => date('H:i:s', $removeEnd),
+                    'hora_fim' => $currentEnd,
+                    'observacoes' => (string) ($range['observacoes'] ?? ''),
+                    'ativo' => 1,
+                ]);
+                $changed++;
+                continue;
+            }
+
+            $this->updateAvailability((int) $range['id'], [
+                'profissional_id' => $professionalId,
+                'data_disponivel' => $date,
+                'hora_inicio' => $currentStart,
+                'hora_fim' => date('H:i:s', $removeStart),
+                'observacoes' => (string) ($range['observacoes'] ?? ''),
+                'ativo' => 1,
+            ]);
+            $changed++;
+        }
+
+        return $changed;
     }
 
     public function paginateAvailabilities(array $filters, int $page, int $perPage, ?int $scopeProfessionalId = null, string $path = 'agenda_liberacao.php'): array
@@ -887,6 +1065,53 @@ final class ScheduleRepository
             ':start_date' => $startDate,
             ':end_date' => $endDate,
             ':status_cancelado' => 'cancelado',
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
+    private function availabilityRangesTouching(int $professionalId, string $date, string $startTime, string $endTime): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT *
+             FROM agenda_disponibilidade
+             WHERE clinica_id = :clinic_id
+               AND profissional_id = :professional_id
+               AND data_disponivel = :data_disponivel
+               AND ativo = 1
+               AND hora_fim >= :hora_inicio
+               AND hora_inicio <= :hora_fim
+             ORDER BY hora_inicio'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_disponivel' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
+    private function availabilityRangesOverlapping(int $professionalId, string $date, string $startTime, string $endTime): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT *
+             FROM agenda_disponibilidade
+             WHERE clinica_id = :clinic_id
+               AND profissional_id = :professional_id
+               AND data_disponivel = :data_disponivel
+               AND ativo = 1
+               AND NOT (hora_fim <= :hora_inicio OR hora_inicio >= :hora_fim)
+             ORDER BY hora_inicio'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':professional_id' => $professionalId,
+            ':data_disponivel' => $date,
+            ':hora_inicio' => $startTime,
+            ':hora_fim' => $endTime,
         ]);
 
         return $stmt->fetchAll();
