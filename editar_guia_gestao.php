@@ -3,7 +3,8 @@ include 'config/db.php';
 
 $guideId = app_query_int('id');
 $query = app_build_query([
-    'selected' => $guideId > 0 ? $guideId : null,
+    'edit_id' => $guideId > 0 ? $guideId : null,
+    'filtrar' => 1,
 ]);
 
-app_redirect('gestao_guias.php' . ($query !== '' ? '?' . $query : ''));
+app_redirect('guias.php' . ($query !== '' ? '?' . $query : ''));

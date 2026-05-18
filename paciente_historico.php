@@ -112,9 +112,13 @@ $fichaCounts = app_stmt_one(
                 <p>Historico resumido dos atendimentos com profissional, servico e data.</p>
             </div>
             <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-light btn-sm rounded-pill px-3" href="pacientes.php?<?= app_h(app_build_query(['paciente' => (string) $patient['nome'], 'filtrar' => 1, 'patient_id' => $patientId])) ?>">Editar paciente</a>
+                <?php if (app_is_professional_user()): ?>
                 <a class="btn btn-outline-light btn-sm rounded-pill px-3" href="paciente_fichas.php?paciente_id=<?= (int) $patientId ?>">Fichas</a>
+                <a class="btn btn-outline-light btn-sm rounded-pill px-3" href="index.php">Voltar</a>
+                <?php else: ?>
+                <a class="btn btn-light btn-sm rounded-pill px-3" href="pacientes.php?<?= app_h(app_build_query(['paciente' => (string) $patient['nome'], 'filtrar' => 1, 'patient_id' => $patientId])) ?>">Editar paciente</a>
                 <a class="btn btn-outline-light btn-sm rounded-pill px-3" href="pacientes.php">Voltar</a>
+                <?php endif; ?>
             </div>
         </div>
     </section>

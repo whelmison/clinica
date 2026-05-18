@@ -1,4 +1,70 @@
-<?php $isPriceTab = ($activeTab ?? 'servicos') === 'precos'; ?>
+<?php
+$isPriceTab = ($activeTab ?? 'servicos') === 'precos';
+$priceReportClinic = $priceReportClinic ?? [];
+$priceReportIssuedAt = $priceReportIssuedAt ?? date('d/m/Y H:i');
+$priceReportFilterText = $priceReportFilterText ?? 'Todos os servicos';
+$priceReportTotals = $priceReportTotals ?? ['servicos' => count($priceReport ?? []), 'precos' => 0];
+$reportClinicName = trim((string) ($priceReportClinic['nome_fantasia'] ?? app_current_clinic_name()));
+$reportClinicLegalName = trim((string) ($priceReportClinic['razao_social'] ?? ''));
+$reportContacts = [];
+$reportAddress = [];
+$reportLogoSrc = trim((string) ($priceReportClinic['logotipo'] ?? ''));
+$reportInitials = '';
+
+foreach (preg_split('/\s+/', $reportClinicName) ?: [] as $part) {
+    if ($part === '') {
+        continue;
+    }
+
+    $reportInitials .= strtoupper(substr($part, 0, 1));
+
+    if (strlen($reportInitials) >= 2) {
+        break;
+    }
+}
+
+$reportInitials = substr($reportInitials !== '' ? $reportInitials : 'CL', 0, 3);
+
+if (!empty($priceReportClinic['cnpj'])) {
+    $reportContacts[] = 'CNPJ ' . app_format_cnpj((string) $priceReportClinic['cnpj']);
+}
+
+if (!empty($priceReportClinic['telefone'])) {
+    $reportContacts[] = 'Tel. ' . app_format_phone_br((string) $priceReportClinic['telefone']);
+}
+
+if (!empty($priceReportClinic['whatsapp']) && (string) $priceReportClinic['whatsapp'] !== (string) ($priceReportClinic['telefone'] ?? '')) {
+    $reportContacts[] = 'WhatsApp ' . app_format_phone_br((string) $priceReportClinic['whatsapp']);
+}
+
+if (!empty($priceReportClinic['email'])) {
+    $reportContacts[] = (string) $priceReportClinic['email'];
+}
+
+if (!empty($priceReportClinic['endereco'])) {
+    $reportAddress[] = (string) $priceReportClinic['endereco'];
+}
+
+$reportCityState = trim(implode('-', array_filter([
+    trim((string) ($priceReportClinic['cidade'] ?? '')),
+    trim((string) ($priceReportClinic['estado'] ?? '')),
+])));
+
+if ($reportCityState !== '') {
+    $reportAddress[] = $reportCityState;
+}
+
+if ($reportLogoSrc !== '' && !preg_match('/^(?:https?:)?\/\//i', $reportLogoSrc)) {
+    $appRoot = dirname(__DIR__, 3);
+    $reportLogoSrc = ltrim(str_replace('\\', '/', $reportLogoSrc), '/');
+    $normalizedLogo = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $reportLogoSrc);
+    $logoPath = $appRoot . DIRECTORY_SEPARATOR . $normalizedLogo;
+
+    if (!is_file($logoPath)) {
+        $reportLogoSrc = '';
+    }
+}
+?>
 <!DOCTYPE html>
 <html>
 <head>
@@ -123,6 +189,75 @@ body {
     min-height: 0;
     overflow: auto;
 }
+.service-prices-print-area {
+    background: #fff;
+}
+.service-print-header {
+    display: none;
+    grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.86fr);
+    gap: 1rem;
+    padding: 0.95rem 1rem 1rem;
+    border-bottom: 1px solid rgba(19, 74, 89, 0.16);
+    margin-bottom: 0.4rem;
+}
+.service-print-brand {
+    display: flex;
+    gap: 0.82rem;
+    align-items: center;
+    min-width: 0;
+}
+.service-print-logo {
+    width: 118px;
+    height: 64px;
+    flex: 0 0 auto;
+    border: 1px solid rgba(19, 74, 89, 0.16);
+    border-radius: 8px;
+    background: #f5fafb;
+    color: #1f7a8c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+.service-print-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.service-print-company,
+.service-print-title {
+    min-width: 0;
+}
+.service-print-company strong {
+    display: block;
+    color: #173642;
+    font-size: 0.9rem;
+    line-height: 1.18;
+    text-transform: uppercase;
+}
+.service-print-company span,
+.service-print-title p {
+    display: block;
+    color: #526b76;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.service-print-title {
+    align-self: center;
+}
+.service-print-title h2 {
+    color: #102f3a;
+    font-size: 1.2rem;
+    font-weight: 800;
+    line-height: 1.12;
+    margin: 0 0 0.45rem;
+}
+.service-print-title p {
+    margin: 0;
+}
 .service-price-report-table {
     margin: 0;
     min-width: 760px;
@@ -203,6 +338,199 @@ body {
 .services-price-page .service-price-report {
     overflow: visible;
 }
+@media print {
+    @page {
+        size: A4 landscape;
+        margin: 8mm;
+    }
+    html,
+    body.services-price-page {
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+    body.services-price-page {
+        display: block !important;
+        color: #111 !important;
+        font-family: Arial, Helvetica, sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    body.services-price-page nav,
+    body.services-price-page .services-hero,
+    body.services-price-page .services-tabs,
+    body.services-price-page .services-layout > .soft-card:not(.services-table-card),
+    body.services-price-page .services-table-card > .card-header,
+    body.services-price-page .services-modal,
+    body.services-price-page script {
+        display: none !important;
+    }
+    body.services-price-page .services-shell,
+    body.services-price-page .services-layout,
+    body.services-price-page .services-table-card,
+    body.services-price-page .services-table-card .card-body {
+        display: block !important;
+        width: 100% !important;
+        max-width: none !important;
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+    body.services-price-page .services-table-card {
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    body.services-price-page .services-table-card::before,
+    body.services-price-page .services-table-card::after {
+        display: none !important;
+    }
+    body.services-price-page #servicePricesExportArea {
+        display: block !important;
+        position: static !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+    }
+    body.services-price-page .service-print-header {
+        display: grid !important;
+        grid-template-columns: 45% 1fr;
+        align-items: stretch;
+        gap: 7mm;
+        padding: 0 0 6mm;
+        margin: 0 0 5mm;
+        border-bottom: 2px solid #12333e;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    body.services-price-page .service-print-logo {
+        width: 38mm;
+        height: 22mm;
+        border: 1px solid #8aa9b2;
+        border-radius: 3mm;
+        background: #fff;
+        color: #12333e;
+        font-size: 13pt;
+    }
+    body.services-price-page .service-print-company strong {
+        color: #12333e;
+        font-size: 11pt;
+        margin-bottom: 1.2mm;
+    }
+    body.services-price-page .service-print-company span,
+    body.services-price-page .service-print-title p {
+        color: #213f49;
+        font-size: 8.4pt;
+        line-height: 1.32;
+    }
+    body.services-price-page .service-print-title h2 {
+        color: #12333e;
+        font-size: 16pt;
+        text-transform: uppercase;
+        margin-bottom: 2.4mm;
+    }
+    body.services-price-page .service-print-title {
+        border-left: 1px solid #c9d9de;
+        padding-left: 7mm;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    body.services-price-page .service-price-report {
+        overflow: visible !important;
+        width: 100% !important;
+    }
+    body.services-price-page .service-price-report-table {
+        width: 100% !important;
+        min-width: 0 !important;
+        border-collapse: collapse !important;
+        border-spacing: 0 !important;
+        table-layout: fixed;
+        font-size: 8.6pt;
+        line-height: 1.25;
+    }
+    body.services-price-page .service-price-report-table th:nth-child(1),
+    body.services-price-page .service-price-report-table td:nth-child(1) {
+        width: 29%;
+    }
+    body.services-price-page .service-price-report-table th:nth-child(2),
+    body.services-price-page .service-price-report-table td:nth-child(2) {
+        width: 13%;
+    }
+    body.services-price-page .service-price-report-table th:nth-child(3),
+    body.services-price-page .service-price-report-table td:nth-child(3),
+    body.services-price-page .service-price-report-table th:nth-child(4),
+    body.services-price-page .service-price-report-table td:nth-child(4) {
+        width: 10%;
+    }
+    body.services-price-page .service-price-report-table th:nth-child(5),
+    body.services-price-page .service-price-report-table td:nth-child(5) {
+        width: 38%;
+    }
+    body.services-price-page .service-price-report-table thead {
+        display: table-header-group;
+    }
+    body.services-price-page .service-price-report-table thead th {
+        position: static !important;
+        background: #12333e !important;
+        color: #fff !important;
+        border: 1px solid #12333e !important;
+        font-size: 8.2pt;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    body.services-price-page .service-price-report-table th,
+    body.services-price-page .service-price-report-table td {
+        padding: 5px 7px !important;
+        border: 1px solid #d6e0e4 !important;
+        overflow-wrap: anywhere;
+    }
+    body.services-price-page .service-price-report-table tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    body.services-price-page .service-price-service-row td {
+        background: #e4f1f4 !important;
+        border-color: #a8ccd4 !important;
+    }
+    body.services-price-page .service-price-master {
+        display: block;
+    }
+    body.services-price-page .service-price-master strong {
+        color: #12333e;
+        font-size: 9.6pt;
+    }
+    body.services-price-page .service-price-master span,
+    body.services-price-page .service-price-empty,
+    body.services-price-page .service-price-detail-empty td {
+        color: #213f49;
+        font-size: 8pt;
+    }
+    body.services-price-page .service-price-note {
+        max-width: none;
+    }
+    body.services-price-page .service-price-actions,
+    body.services-price-page .service-price-master .btn {
+        display: none !important;
+    }
+    body.services-price-page #servicePricesExportArea::after {
+        content: "Relatorio gerado pelo sistema Clinica Fisiolife";
+        display: block;
+        margin-top: 5mm;
+        padding-top: 2mm;
+        border-top: 1px solid #d6e0e4;
+        color: #526b76;
+        font-size: 7.6pt;
+        text-align: right;
+    }
+}
 @media (max-width: 991px) {
     html,
     body {
@@ -221,6 +549,9 @@ body {
         align-items: flex-start;
         flex-direction: column;
     }
+    .service-print-header {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 </head>
@@ -238,8 +569,7 @@ body {
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <?php if ($isPriceTab): ?>
-                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicePricesExportArea', 'jpg', 'precos_servicos')">Exportar JPG</button>
-                    <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicePricesExportArea', 'pdf', 'precos_servicos')">Exportar PDF</button>
+                    <button type="button" class="btn btn-light btn-sm rounded-pill px-3" onclick="window.print()">Imprimir relatorio</button>
                 <?php else: ?>
                     <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'jpg', 'servicos')">Exportar JPG</button>
                     <button type="button" class="btn btn-outline-light btn-sm rounded-pill px-3" data-export-list onclick="appExportList('servicesExportArea', 'pdf', 'servicos')">Exportar PDF</button>
@@ -315,7 +645,7 @@ body {
             </div>
         </div>
     <?php else: ?>
-        <div class="soft-card card services-card services-table-card" id="servicePricesExportArea">
+        <div class="soft-card card services-card services-table-card">
             <div class="card-header">
                 <div class="panel-title">
                     <h5>Relatorio de precos</h5>
@@ -323,61 +653,89 @@ body {
                 </div>
             </div>
             <div class="card-body">
-                <div class="service-price-report table-responsive">
-                    <?php if (empty($priceReport)): ?>
-                        <div class="service-price-empty">Nenhum servico encontrado para os filtros informados.</div>
-                    <?php else: ?>
-                        <table class="table table-soft service-price-report-table align-middle">
-                            <thead>
-                            <tr>
-                                <th>Plano</th>
-                                <th>Valor</th>
-                                <th>Status</th>
-                                <th>Guia</th>
-                                <th>Observacoes</th>
-                                <th class="text-end">Acoes</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            <?php foreach ($priceReport as $service): ?>
-                                <tr class="service-price-service-row">
-                                    <td colspan="6">
-                                        <div class="service-price-master">
-                                            <div>
-                                                <strong><?= app_h((string) $service['nome']) ?></strong>
-                                                <span>
-                                                    <?= (int) $service['tempo_minutos'] ?> min |
-                                                    <?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?> |
-                                                    <?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?>
-                                                </span>
-                                            </div>
-                                            <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id'], 'tab' => 'precos'])) ?>">Abrir precos</a>
-                                        </div>
-                                    </td>
-                                </tr>
-
-                                <?php if (empty($service['precos'])): ?>
-                                    <tr class="service-price-detail-empty">
-                                        <td colspan="6">Sem preco cadastrado para este servico.</td>
-                                    </tr>
+                <div class="service-prices-print-area" id="servicePricesExportArea">
+                    <div class="service-print-header">
+                        <div class="service-print-brand">
+                            <div class="service-print-logo">
+                                <?php if ($reportLogoSrc !== ''): ?>
+                                    <img src="<?= app_h($reportLogoSrc) ?>" alt="Logotipo">
                                 <?php else: ?>
-                                    <?php foreach ($service['precos'] as $price): ?>
-                                        <tr>
-                                            <td><?= app_h((string) ($price['plano_nome'] ?: 'Plano nao informado')) ?></td>
-                                            <td><strong><?= app_money_br((float) $price['valor']) ?></strong></td>
-                                            <td><?= (int) $price['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
-                                            <td><?= !empty($price['permite_alterar_guia']) ? 'Editavel' : 'Fixo' ?></td>
-                                            <td class="service-price-note"><?= app_h((string) ($price['observacoes'] ?: '-')) ?></td>
-                                            <td class="text-end service-price-actions">
-                                                <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id'], 'tab' => 'precos'])) ?>">Editar</a>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
+                                    <span><?= app_h($reportInitials) ?></span>
                                 <?php endif; ?>
-                            <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    <?php endif; ?>
+                            </div>
+                            <div class="service-print-company">
+                                <strong><?= app_h($reportClinicName) ?></strong>
+                                <?php if ($reportClinicLegalName !== ''): ?>
+                                    <span><?= app_h($reportClinicLegalName) ?></span>
+                                <?php endif; ?>
+                                <?php if (!empty($reportContacts)): ?>
+                                    <span><?= app_h(implode(' | ', $reportContacts)) ?></span>
+                                <?php endif; ?>
+                                <?php if (!empty($reportAddress)): ?>
+                                    <span><?= app_h(implode(', ', $reportAddress)) ?></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <div class="service-print-title">
+                            <h2>Relatorio de precos por servico</h2>
+                            <p>Filtros: <?= app_h((string) $priceReportFilterText) ?></p>
+                            <p>Servicos: <?= (int) ($priceReportTotals['servicos'] ?? 0) ?> | Precos: <?= (int) ($priceReportTotals['precos'] ?? 0) ?></p>
+                            <p>Emissao: <?= app_h((string) $priceReportIssuedAt) ?></p>
+                        </div>
+                    </div>
+
+                    <div class="service-price-report table-responsive">
+                        <?php if (empty($priceReport)): ?>
+                            <div class="service-price-empty">Nenhum servico encontrado para os filtros informados.</div>
+                        <?php else: ?>
+                            <table class="table table-soft service-price-report-table align-middle">
+                                <thead>
+                                <tr>
+                                    <th>Plano</th>
+                                    <th>Valor</th>
+                                    <th>Status</th>
+                                    <th>Guia</th>
+                                    <th>Observacoes</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <?php foreach ($priceReport as $service): ?>
+                                    <tr class="service-price-service-row">
+                                        <td colspan="5">
+                                            <div class="service-price-master">
+                                                <div>
+                                                    <strong><?= app_h((string) $service['nome']) ?></strong>
+                                                    <span>
+                                                        <?= (int) $service['tempo_minutos'] ?> min |
+                                                        <?= ($service['tipo_agendamento'] ?? 'individual') === 'grupo' ? 'Grupo' : 'Individual' ?> |
+                                                        <?= (int) $service['ativo'] === 1 ? 'Ativo' : 'Inativo' ?>
+                                                    </span>
+                                                </div>
+                                                <a class="btn btn-sm btn-outline-primary" href="editar_servico.php?<?= app_h(app_build_query(['id' => $service['id'], 'tab' => 'precos'])) ?>">Abrir precos</a>
+                                            </div>
+                                        </td>
+                                    </tr>
+
+                                    <?php if (empty($service['precos'])): ?>
+                                        <tr class="service-price-detail-empty">
+                                            <td colspan="5">Sem preco cadastrado para este servico.</td>
+                                        </tr>
+                                    <?php else: ?>
+                                        <?php foreach ($service['precos'] as $price): ?>
+                                            <tr>
+                                                <td><?= app_h((string) ($price['plano_nome'] ?: 'Plano nao informado')) ?></td>
+                                                <td><strong><?= app_money_br((float) $price['valor']) ?></strong></td>
+                                                <td><?= (int) $price['ativo'] === 1 ? 'Ativo' : 'Inativo' ?></td>
+                                                <td><?= !empty($price['permite_alterar_guia']) ? 'Editavel' : 'Fixo' ?></td>
+                                                <td class="service-price-note"><?= app_h((string) ($price['observacoes'] ?: '-')) ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>

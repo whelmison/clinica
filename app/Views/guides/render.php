@@ -72,7 +72,7 @@ function render_guide_metrics(array $guides): string
     return (string) ob_get_clean();
 }
 
-function render_guide_cards(array $guides, ?int $selectedId, array $filters, array $pagination): string
+function render_guide_cards(array $guides, ?int $selectedId, array $filters, array $pagination, bool $showFinancial = true): string
 {
     ob_start();
 
@@ -82,13 +82,15 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
             <span>Ajuste a busca ou limpe os filtros para ver mais resultados.</span>
         </div>
     <?php else: ?>
-        <div class="guide-table">
+        <div class="guide-table<?= $showFinancial ? '' : ' is-clinical' ?>">
             <div class="guide-row guide-row-head">
                 <div>Guia / paciente</div>
                 <div>Profissional</div>
                 <div>Sessoes</div>
-                <div>Faturamento</div>
-                <div class="text-end">Valor</div>
+                <?php if ($showFinancial): ?>
+                    <div>Faturamento</div>
+                    <div class="text-end">Valor</div>
+                <?php endif; ?>
                 <div class="text-end">Acao</div>
             </div>
         <?php
@@ -115,14 +117,16 @@ function render_guide_cards(array $guides, ?int $selectedId, array $filters, arr
                     <small><?= app_h($guide['servico_nome'] ?: 'Servico nao informado') ?></small>
                     <small><?= app_h($status['label']) ?> | <?= (int) ($guide['autorizada'] ?? 0) === 1 ? 'Autorizada' : 'Nao autorizada' ?></small>
                 </div>
-                <div>
-                    <span class="guide-pill"><?= app_h(guide_type_label($guide)) ?></span>
-                    <small><?= app_h(guide_billing_label($guide)) ?></small>
-                </div>
-                <div class="guide-value-cell">
-                    <strong><?= app_money_br((float) $guide['valor_guia']) ?></strong>
-                    <span><?= app_date_br($guide['data']) ?></span>
-                </div>
+                <?php if ($showFinancial): ?>
+                    <div>
+                        <span class="guide-pill"><?= app_h(guide_type_label($guide)) ?></span>
+                        <small><?= app_h(guide_billing_label($guide)) ?></small>
+                    </div>
+                    <div class="guide-value-cell">
+                        <strong><?= app_money_br((float) $guide['valor_guia']) ?></strong>
+                        <span><?= app_date_br($guide['data']) ?></span>
+                    </div>
+                <?php endif; ?>
                 <div class="guide-action-cell">
                     <span><?= $lockedForEdit ? 'Bloqueada' : 'Editar' ?></span>
                 </div>

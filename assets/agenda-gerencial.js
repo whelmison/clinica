@@ -162,55 +162,7 @@
     }
 
     async function printReport() {
-        const printWindow = window.open('', '_blank', 'width=1280,height=900');
-
-        if (!printWindow) {
-            showNotice('Permita a abertura de janelas para imprimir o relatorio.', 'warning');
-            return;
-        }
-
-        printWindow.document.write(`
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>Preparando impressao</title>
-                <style>
-                    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, sans-serif; color: #0f4c5c; }
-                </style>
-            </head>
-            <body>Preparando impressao...</body>
-            </html>
-        `);
-        printWindow.document.close();
-
-        const canvas = await buildCanvas();
-
-        if (!canvas) {
-            printWindow.close();
-            return;
-        }
-
-        const imageUrl = canvas.toDataURL('image/jpeg', 0.96);
-
-        printWindow.document.open();
-        printWindow.document.write(`
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>${String(config.reportTitle || 'Relatorio gerencial')}</title>
-                <style>
-                    @page { size: landscape; margin: 8mm; }
-                    html, body { margin: 0; background: #fff; }
-                    body { padding: 8mm; }
-                    img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
-                </style>
-            </head>
-            <body>
-                <img src="${imageUrl}" alt="Relatorio gerencial" onload="window.focus(); setTimeout(function(){ window.print(); }, 150);">
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
+        window.print();
         showNotice('Relatorio enviado para impressao.', 'success');
     }
 

@@ -9,6 +9,20 @@ app_install_schema($conn);
 $pdo = app_pdo();
 $patientRepository = new PatientRepository($pdo);
 $patientService = new PatientService($patientRepository);
+$patientAccessMap = app_effective_page_access_map($conn);
+$patientCanAccessPage = static function (string $page) use ($patientAccessMap): bool {
+    $access = $patientAccessMap[$page] ?? [];
+
+    if (in_array('public', $access, true) || in_array('auth', $access, true)) {
+        return true;
+    }
+
+    return $access !== [] && app_profile_matches_access($access);
+};
+$canCreatePatients = $patientCanAccessPage('novo_paciente.php');
+$canEditPatients = $patientCanAccessPage('editar_paciente.php');
+$canDeletePatients = !app_is_professional_user() && $patientCanAccessPage('excluir_paciente.php');
+$canAccessPatientSheets = app_is_professional_user() && $patientCanAccessPage('paciente_fichas.php');
 $requestedPatientId = app_query_int('patient_id');
 $selectedPatient = null;
 $isPatientPost = app_request_method() === 'POST';
@@ -36,6 +50,11 @@ if (!function_exists('app_patient_filter_query')) {
 }
 
 if ($requestedPatientId > 0) {
+    if (!$canEditPatients) {
+        app_flash('warning', 'Seu perfil pode consultar pacientes, mas nao pode editar cadastro.');
+        app_redirect('pacientes.php?' . app_patient_filter_query($patientFilters));
+    }
+
     $selectedPatient = $patientRepository->find($requestedPatientId);
 
     if (!$selectedPatient) {
@@ -79,6 +98,18 @@ if (app_request_method() === 'POST') {
     $action = app_request_post('action', '') ?? '';
 
     if ($action === 'save_patient') {
+        $postedPatientId = app_post_int('patient_id');
+
+        if ($postedPatientId > 0 && !$canEditPatients) {
+            app_flash('danger', 'Sem permissao para editar paciente.');
+            app_redirect('pacientes.php?' . app_patient_filter_query($patientFilters));
+        }
+
+        if ($postedPatientId <= 0 && !$canCreatePatients) {
+            app_flash('danger', 'Sem permissao para cadastrar paciente.');
+            app_redirect('pacientes.php?' . app_patient_filter_query($patientFilters));
+        }
+
         $patientFormValues = [
             'patient_id' => app_post_int('patient_id'),
             'nome' => app_request_post('nome', '') ?? '',
@@ -99,7 +130,7 @@ if (app_request_method() === 'POST') {
             'dia_preferencia' => app_request_post('dia_preferencia', '') ?? '',
             'horario_preferencia' => app_request_post('horario_preferencia', '') ?? '',
         ];
-        $result = $patientService->save(app_post_int('patient_id') ?: null, $_POST);
+        $result = $patientService->save(app_post_int('patient_id') ?: null, $_POST, app_current_user());
 
         if ($result['ok']) {
             app_flash('success', $result['message']);

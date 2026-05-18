@@ -275,8 +275,9 @@ if (!function_exists('app_group_find_or_create')) {
 }
 
 if (!function_exists('app_group_active_guide')) {
-    function app_group_active_guide(mysqli $conn, int $clinicId, int $guideId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): ?array
+    function app_group_active_guide(mysqli $conn, int $clinicId, int $guideId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0, bool $requireAuthorized = true): ?array
     {
+        $authorizationSql = $requireAuthorized ? "\n               AND g.autorizada = 1" : '';
         $guide = app_stmt_one(
             $conn,
             'SELECT g.id, g.codigo, g.paciente_id, g.profissional_id, g.total_sessoes, g.autorizada,
@@ -295,7 +296,7 @@ if (!function_exists('app_group_active_guide')) {
                AND g.paciente_id = ?
                AND (g.profissional_id = ? OR g.profissional_id IS NULL)
                AND (? <= 0 OR g.servico_id = ? OR g.servico_id IS NULL)
-               AND g.autorizada = 1
+               ' . $authorizationSql . '
                AND COALESCE(g.status_operacional, ?) NOT IN (?, ?)
              LIMIT 1',
             'siiiiiiiiisss',
@@ -312,14 +313,17 @@ if (!function_exists('app_group_active_guide')) {
     }
 }
 
-if (!function_exists('app_group_authorized_guides')) {
-    function app_group_authorized_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): array
+if (!function_exists('app_group_patient_guides')) {
+    function app_group_patient_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0, bool $requireAuthorized = true): array
     {
+        $authorizationSql = $requireAuthorized ? "\n               AND g.autorizada = 1" : '';
+
         return app_stmt_all(
             $conn,
             'SELECT g.id,
                     g.codigo,
                     g.total_sessoes,
+                    g.autorizada,
                     COALESCE(pl.nome, ?) AS plano_nome,
                     COALESCE(a.usadas, 0) + COALESCE(r.reservadas, 0) AS usadas,
                     (g.total_sessoes - COALESCE(a.usadas, 0) - COALESCE(r.reservadas, 0)) AS restantes
@@ -342,7 +346,7 @@ if (!function_exists('app_group_authorized_guides')) {
                AND g.paciente_id = ?
                AND (g.profissional_id = ? OR g.profissional_id IS NULL)
                AND (? <= 0 OR g.servico_id = ? OR g.servico_id IS NULL)
-               AND g.autorizada = 1
+               ' . $authorizationSql . '
                AND COALESCE(g.status_operacional, ?) NOT IN (?, ?)
              HAVING restantes > 0
              ORDER BY g.data DESC, g.id DESC',
@@ -350,6 +354,64 @@ if (!function_exists('app_group_authorized_guides')) {
         ['', $clinicId, $ignoreAttendanceId, $ignoreAttendanceId, $clinicId, 'cancelado', $ignoreMemberId, $ignoreMemberId, $clinicId, $patientId, $professionalId, $serviceId, $serviceId, 'aguardando_autorizacao', 'cancelada', 'finalizada']
         );
     }
+}
+
+if (!function_exists('app_group_authorized_guides')) {
+    function app_group_authorized_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): array
+    {
+        return app_group_patient_guides($conn, $clinicId, $patientId, $professionalId, $ignoreAttendanceId, $ignoreMemberId, $serviceId, true);
+    }
+}
+
+if (!function_exists('app_group_available_guides')) {
+    function app_group_available_guides(mysqli $conn, int $clinicId, int $patientId, int $professionalId, int $ignoreAttendanceId = 0, int $ignoreMemberId = 0, int $serviceId = 0): array
+    {
+        return app_group_patient_guides($conn, $clinicId, $patientId, $professionalId, $ignoreAttendanceId, $ignoreMemberId, $serviceId, false);
+    }
+}
+
+if (app_request_query('ajax', '') === 'group_guides') {
+    $ajaxPatientId = app_query_int('paciente_id');
+    $ajaxProfessionalId = app_query_int('professional_id');
+    $ajaxServiceId = app_query_int('service_id');
+    $ajaxRequireAuthorized = app_request_query('require_authorized', '') === '1';
+
+    if (!$canManageGroupAgenda) {
+        app_json(['guides' => []], 403);
+    }
+
+    if ($ajaxPatientId <= 0 || $ajaxProfessionalId <= 0) {
+        app_json(['guides' => []]);
+    }
+
+    $ajaxGuides = app_group_patient_guides(
+        $conn,
+        $clinicId,
+        $ajaxPatientId,
+        $ajaxProfessionalId,
+        0,
+        0,
+        $ajaxServiceId,
+        $ajaxRequireAuthorized
+    );
+
+    app_json([
+        'guides' => array_map(static function (array $guide): array {
+            $code = trim((string) ($guide['codigo'] ?? ''));
+            $guideId = (int) ($guide['id'] ?? 0);
+            $remaining = (int) ($guide['restantes'] ?? 0);
+            $labelCode = $code !== '' ? $code : 'GUIA #' . $guideId;
+            $status = !empty($guide['autorizada']) ? 'Autorizada' : 'Nao autorizada';
+
+            return [
+                'id' => $guideId,
+                'codigo' => $labelCode,
+                'restantes' => $remaining,
+                'autorizada' => !empty($guide['autorizada']),
+                'label' => $labelCode . ' - restam ' . $remaining . ' - ' . $status,
+            ];
+        }, $ajaxGuides),
+    ]);
 }
 
 if (!function_exists('app_group_create_attendance')) {
@@ -869,8 +931,12 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
         $date = app_request_post('data_agendamento', '') ?? '';
         $time = app_request_post('hora_inicio', '') ?? '';
         $patientId = app_post_int('paciente_id');
+        $guideId = app_post_int('guia_id');
         $startDate = DateTime::createFromFormat('H:i', $time) ?: DateTime::createFromFormat('H:i:s', $time);
         $dateError = app_group_validate_schedule_date($date);
+        $guide = $patientId > 0 && $guideId > 0
+            ? app_group_active_guide($conn, $clinicId, $guideId, $patientId, $postProfessionalId, 0, 0, (int) ($postService['id'] ?? 0), false)
+            : null;
 
         if ($dateError !== null) {
             $result = ['ok' => false, 'message' => $dateError];
@@ -878,7 +944,11 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
             $result = ['ok' => false, 'message' => 'Informe um horario valido para agendar.'];
         } elseif ($patientId <= 0) {
             $result = ['ok' => false, 'message' => 'Escolha um paciente da lista.'];
+        } elseif (!$guide) {
+            $result = ['ok' => false, 'message' => 'Escolha uma guia com sessoes disponiveis.'];
         } else {
+            $reserved = app_group_reserved_guide_sessions($conn, $clinicId, $guideId);
+            $remaining = max(0, (int) ($guide['total_sessoes'] ?? 0) - (int) ($guide['usadas'] ?? 0) - $reserved);
             $duration = max(1, (int) ($postService['tempo_minutos'] ?? 0));
             $endDate = clone $startDate;
             $endDate->modify('+' . $duration . ' minutes');
@@ -887,7 +957,9 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
 
             $patientConflict = app_group_patient_schedule_conflict($conn, $clinicId, $patientId, date('Y-m-d', strtotime($date)), $startSql, $endSql);
 
-            if ($patientConflict !== null) {
+            if ($remaining <= 0) {
+                $result = ['ok' => false, 'message' => 'A guia selecionada nao possui sessoes disponiveis.'];
+            } elseif ($patientConflict !== null) {
                 $result = ['ok' => false, 'message' => app_group_patient_conflict_message($patientConflict)];
             } else {
                 $openResult = app_group_find_or_create($conn, $clinicId, $postProfessionalId, $postService, $date, $startSql);
@@ -906,10 +978,10 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
                     } else {
                         $ok = app_stmt_execute(
                             $conn,
-                            'INSERT INTO agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id, status, observacoes)
-                             VALUES (?, ?, ?, ?, ?)',
-                            'iiiss',
-                            [$clinicId, (int) $group['id'], $patientId, 'agendado', trim((string) ($_POST['observacoes'] ?? ''))]
+                            'INSERT INTO agenda_grupo_pacientes (clinica_id, grupo_id, paciente_id, guia_id, status, observacoes)
+                             VALUES (?, ?, ?, ?, ?, ?)',
+                            'iiiiss',
+                            [$clinicId, (int) $group['id'], $patientId, $guideId, 'agendado', trim((string) ($_POST['observacoes'] ?? ''))]
                         );
                         $result = $ok
                             ? ['ok' => true, 'message' => 'Paciente adicionado ao grupo.', 'group_id' => (int) $group['id']]
@@ -935,12 +1007,12 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
             'quantidade_sessoes' => $sessions,
             'dias_semana' => $weekdays,
         ];
-        $guide = $guideId > 0 ? app_group_active_guide($conn, $clinicId, $guideId, $patientId, $postProfessionalId, 0, 0, (int) ($postService['id'] ?? 0)) : null;
+        $guide = $guideId > 0 ? app_group_active_guide($conn, $clinicId, $guideId, $patientId, $postProfessionalId, 0, 0, (int) ($postService['id'] ?? 0), false) : null;
 
         if ($patientId <= 0) {
             $result = ['ok' => false, 'message' => 'Escolha um paciente da lista.'];
         } elseif (!$guide) {
-            $result = ['ok' => false, 'message' => 'Escolha uma guia autorizada com sessoes disponiveis.'];
+            $result = ['ok' => false, 'message' => 'Escolha uma guia com sessoes disponiveis.'];
         } else {
             $reserved = app_group_reserved_guide_sessions($conn, $clinicId, $guideId);
             $remaining = max(0, (int) ($guide['total_sessoes'] ?? 0) - (int) ($guide['usadas'] ?? 0) - $reserved);
@@ -1035,7 +1107,7 @@ if (app_request_method() === 'POST' && $canManageGroupAgenda) {
             app_group_delete_attendance($conn, $clinicId, (int) ($member['atendimento_id'] ?? 0));
             $ok = app_stmt_execute(
                 $conn,
-                'UPDATE agenda_grupo_pacientes SET status = ?, guia_id = NULL, atendimento_id = NULL WHERE clinica_id = ? AND id = ?',
+                'UPDATE agenda_grupo_pacientes SET status = ?, atendimento_id = NULL WHERE clinica_id = ? AND id = ?',
                 'sii',
                 [$status, $clinicId, $memberId]
             );
@@ -1151,7 +1223,7 @@ if ($quickMode) {
         ? app_stmt_one($conn, 'SELECT id, nome, telefone FROM pacientes WHERE clinica_id = ? AND id = ? LIMIT 1', 'ii', [$clinicId, $quickPatientId])
         : null;
     $quickGuides = $quickPatientId > 0 && $selectedProfessionalId > 0
-        ? app_group_authorized_guides($conn, $clinicId, $quickPatientId, $selectedProfessionalId, 0, 0, $selectedServiceId)
+        ? app_group_available_guides($conn, $clinicId, $quickPatientId, $selectedProfessionalId, 0, 0, $selectedServiceId)
         : [];
     $quickPatientScheduleRows = $quickPatientId > 0
         ? app_group_patient_schedule_rows($conn, $clinicId, $quickPatientId, date('Y-m-d'), 20)
@@ -1738,7 +1810,7 @@ body {
                         </div>
                     </div>
                     <div class="quick-field wide">
-                        <label for="quickGuide">Guia autorizada</label>
+                        <label for="quickGuide">Guia</label>
                         <select name="guia_id" id="quickGuide" class="form-select" required>
                             <?php if ($quickGuides === []): ?>
                                 <option value="">Selecione o paciente</option>
@@ -1746,7 +1818,7 @@ body {
                                 <option value="">Selecione a guia</option>
                                 <?php foreach ($quickGuides as $guideOption): ?>
                                     <option value="<?= (int) $guideOption['id'] ?>" <?= (int) $quickGuideId === (int) $guideOption['id'] ? 'selected' : '' ?>>
-                                        <?= app_h(($guideOption['codigo'] ?: ('GUIA #' . $guideOption['id'])) . ' - restam ' . (int) $guideOption['restantes']) ?>
+                                        <?= app_h(($guideOption['codigo'] ?: ('GUIA #' . $guideOption['id'])) . ' - restam ' . (int) $guideOption['restantes'] . ' - ' . (!empty($guideOption['autorizada']) ? 'Autorizada' : 'Nao autorizada')) ?>
                                     </option>
                                 <?php endforeach; ?>
                             <?php endif; ?>
@@ -2569,7 +2641,7 @@ body {
     border-radius: 14px;
     display: grid;
     gap: 0.42rem;
-    grid-template-columns: minmax(260px, 1.2fr) minmax(180px, 0.8fr) auto;
+    grid-template-columns: minmax(240px, 1.1fr) minmax(190px, 0.85fr) minmax(180px, 0.75fr) auto;
     margin-bottom: 0.58rem;
     padding: 0.58rem;
 }
@@ -2577,6 +2649,7 @@ body {
     margin-bottom: 0.16rem;
 }
 .group-add-band .form-control,
+.group-add-band .form-select,
 .group-add-band .btn {
     min-height: 34px;
     font-size: 0.78rem;
@@ -2775,7 +2848,7 @@ body.is-capturing-group-modal .group-capture-hide {
         <div>
             <p class="group-kicker">Agenda em grupo</p>
             <h3>Agenda em Grupo</h3>
-            <p>Controle horarios com varios pacientes e realizacao vinculada a guia autorizada.</p>
+            <p>Controle horarios com varios pacientes; agendamento exige guia e Realizado exige guia autorizada.</p>
         </div>
         <div class="group-actions">
             <a class="btn btn-outline-light" href="<?= app_h($calendarResetUrl) ?>">Semana atual</a>
@@ -2970,6 +3043,12 @@ $professionalWhatsappPhone = app_normalize_phone((string) ($selectedProfessional
                             <div class="autocomplete-menu" id="groupPatientMenu"></div>
                         </div>
                     </div>
+                    <div class="group-add-guide">
+                        <label class="form-label small text-muted" for="groupPatientGuide">Guia</label>
+                        <select name="guia_id" id="groupPatientGuide" class="form-select" required>
+                            <option value="">Selecione o paciente</option>
+                        </select>
+                    </div>
                     <div class="group-add-notes">
                         <label class="form-label small text-muted">Observacoes</label>
                         <input type="text" name="observacoes" class="form-control" placeholder="Opcional">
@@ -3009,7 +3088,7 @@ $professionalWhatsappPhone = app_normalize_phone((string) ($selectedProfessional
                                 </div>
                                 <div class="group-seat-patient">
                                     <strong><?= app_h((string) $member['paciente_nome']) ?></strong>
-                                    <small><?= $memberStatus === 'realizado' && $member['guia_codigo'] !== '' ? 'Guia ' . app_h((string) $member['guia_codigo']) : 'Sem guia no agendamento' ?></small>
+                                    <small><?= $member['guia_codigo'] !== '' ? 'Guia ' . app_h((string) $member['guia_codigo']) . (!empty($member['guia_autorizada']) ? ' autorizada' : ' nao autorizada') : 'Sem guia no agendamento' ?></small>
                                 </div>
                                 <form method="POST" class="group-status-form">
                                     <input type="hidden" name="action" value="update_member_status">
@@ -3249,13 +3328,70 @@ function setupPatientAutocomplete() {
     const input = document.getElementById('groupPatientSearch');
     const patientId = document.getElementById('groupPatientId');
     const menu = document.getElementById('groupPatientMenu');
+    const guideSelect = document.getElementById('groupPatientGuide');
+    const form = document.getElementById('addGroupPatientForm');
     let controller = null;
+    let guideController = null;
 
     if (!input || !patientId || !menu) return;
 
     function closeMenu() {
         menu.classList.remove('is-open');
         menu.innerHTML = '';
+    }
+
+    function setGuideOptions(message) {
+        if (!guideSelect) return;
+        guideSelect.innerHTML = '';
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = message;
+        guideSelect.appendChild(option);
+    }
+
+    function loadPatientGuides(selectedPatientId) {
+        if (!guideSelect || !form) return;
+        const professional = form.querySelector('[name="professional_id"]')?.value || '';
+        const service = form.querySelector('[name="service_id"]')?.value || '';
+        const params = new URLSearchParams({
+            ajax: 'group_guides',
+            paciente_id: selectedPatientId,
+            professional_id: professional,
+            service_id: service,
+        });
+
+        setGuideOptions('Carregando guias...');
+        guideController?.abort();
+        guideController = new AbortController();
+
+        fetch('secretaria_agenda_grupo.php?' + params.toString(), { signal: guideController.signal })
+            .then((response) => response.json())
+            .then((data) => {
+                const guides = data.guides || [];
+                guideSelect.innerHTML = '';
+
+                if (!guides.length) {
+                    setGuideOptions('Nenhuma guia disponivel');
+                    return;
+                }
+
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = 'Selecione a guia';
+                guideSelect.appendChild(empty);
+
+                guides.forEach((guide) => {
+                    const option = document.createElement('option');
+                    option.value = guide.id;
+                    option.textContent = guide.label;
+                    guideSelect.appendChild(option);
+                });
+            })
+            .catch((error) => {
+                if (error.name !== 'AbortError') {
+                    setGuideOptions('Nao foi possivel carregar guias');
+                }
+            });
     }
 
     function render(items) {
@@ -3274,6 +3410,7 @@ function setupPatientAutocomplete() {
                 patientId.value = item.id;
                 input.value = item.nome;
                 closeMenu();
+                loadPatientGuides(item.id);
             });
             menu.appendChild(button);
         });
@@ -3282,6 +3419,7 @@ function setupPatientAutocomplete() {
 
     input.addEventListener('input', () => {
         patientId.value = '';
+        setGuideOptions('Selecione o paciente');
         const term = input.value.trim();
 
         if (term.length < 2) {

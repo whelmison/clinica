@@ -53,6 +53,7 @@ $appointmentUnavailableMessage = $appointmentUnavailableMessage ?? 'Este horario
 $autoOpenSelectedAppointmentModal = $autoOpenSelectedAppointmentModal ?? false;
 $floatingFlashMessages = $floatingFlashMessages ?? false;
 $autoOpenCalendarFilterModal = $autoOpenCalendarFilterModal ?? false;
+$calendarFilterMessage = $calendarFilterMessage ?? '';
 $appointmentReturnTo = $appointmentReturnTo ?? '';
 $appointmentTimeStepSeconds = max(60, (int) ($appointmentTimeStepSeconds ?? 300));
 $menuFlashMode = $floatingFlashMessages ? 'manual' : ($menuFlashMode ?? 'inline');
@@ -140,17 +141,34 @@ $bodyClass = $hasAvailabilityOperation && !$hasAppointmentOperation ? 'agenda-av
                                 </div>
                             </div>
                             <div class="agenda-filter-grid">
+                                    <?php if (app_is_professional_user()): ?>
                                 <div>
-                                    <label for="calendarProfessional">Profissional</label>
-                                    <select name="professional_id" id="calendarProfessional" class="form-select" data-page-autofocus="1" <?= app_is_professional_user() ? 'disabled' : '' ?>>
+                                    <label for="calendarProfessionalSearch">Profissional</label>
+                                        <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                                        <input type="text" id="calendarProfessionalSearch" class="form-control" value="<?= app_h((string) ($currentProfessional['nome'] ?? $selectedProfessionalName)) ?>" readonly>
+                                    <?php else: ?>
+                                <div>
+                                    <label for="calendarProfessionalSearch">Profissional</label>
+                                    <select name="professional_id" id="calendarProfessional" class="form-select" style="display:none;" tabindex="-1" aria-hidden="true">
+                                        <option value="">Selecione o profissional</option>
                                         <?php foreach ($professionals as $professional): ?>
                                             <option value="<?= (int) $professional['id'] ?>" <?= (int) $selectedProfessionalId === (int) $professional['id'] ? 'selected' : '' ?>>
-                                                <?= app_h(app_first_name((string) $professional['nome'])) ?>
+                                                <?= app_h((string) $professional['nome']) ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
-                                    <?php if (app_is_professional_user()): ?>
-                                        <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                                    <div class="autocomplete-wrap">
+                                        <input
+                                            type="text"
+                                            id="calendarProfessionalSearch"
+                                            class="form-control"
+                                            data-page-autofocus="1"
+                                            placeholder="Digite o nome do profissional"
+                                            autocomplete="off"
+                                            value="<?= app_h((string) ($currentProfessional['nome'] ?? '')) ?>"
+                                        >
+                                        <div class="autocomplete-menu" id="calendarProfessionalMenu"></div>
+                                    </div>
                                     <?php endif; ?>
                                 </div>
                                 <div>
@@ -509,23 +527,41 @@ $bodyClass = $hasAvailabilityOperation && !$hasAppointmentOperation ? 'agenda-av
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
             </div>
             <div class="modal-body">
+                <?php if (trim((string) $calendarFilterMessage) !== ''): ?>
+                    <div class="alert alert-warning py-2 mb-3"><?= app_h((string) $calendarFilterMessage) ?></div>
+                <?php endif; ?>
                 <form method="GET" class="agenda-toolbar-form" id="calendarFilterForm">
                     <div class="agenda-toolbar-field">
-                        <label for="calendarProfessional">Profissional</label>
-                        <select name="professional_id" id="calendarProfessional" class="form-select" data-page-autofocus="1" <?= app_is_professional_user() ? 'disabled' : '' ?>>
+                        <label for="calendarProfessionalSearch">Profissional</label>
+                        <?php if (app_is_professional_user()): ?>
+                            <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                            <input type="text" id="calendarProfessionalSearch" class="form-control" value="<?= app_h((string) ($currentProfessional['nome'] ?? $selectedProfessionalName)) ?>" readonly>
+                        <?php else: ?>
+                        <select name="professional_id" id="calendarProfessional" class="form-select" style="display:none;" tabindex="-1" aria-hidden="true">
+                            <option value="">Selecione o profissional</option>
                             <?php foreach ($professionals as $professional): ?>
                                 <option value="<?= (int) $professional['id'] ?>" <?= (int) $selectedProfessionalId === (int) $professional['id'] ? 'selected' : '' ?>>
                                     <?= app_h((string) $professional['nome']) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <?php if (app_is_professional_user()): ?>
-                            <input type="hidden" name="professional_id" value="<?= (int) $selectedProfessionalId ?>">
+                        <div class="autocomplete-wrap">
+                            <input
+                                type="text"
+                                id="calendarProfessionalSearch"
+                                class="form-control"
+                                data-page-autofocus="1"
+                                placeholder="Digite o nome do profissional"
+                                autocomplete="off"
+                                value="<?= app_h((string) ($currentProfessional['nome'] ?? '')) ?>"
+                            >
+                            <div class="autocomplete-menu" id="calendarProfessionalMenu"></div>
+                        </div>
                         <?php endif; ?>
                     </div>
                     <div class="agenda-toolbar-field" id="calendarServiceField" <?= $showCalendarServiceSelect ? '' : 'style="display:none;"' ?>>
                         <label for="calendarService">Servico</label>
-                        <select name="service_id" id="calendarService" class="form-select">
+                        <select name="service_id" id="calendarService" class="form-select" <?= $showCalendarServiceSelect ? 'required' : '' ?>>
                             <option value="">Selecione o servico</option>
                             <?php foreach ($calendarFilterServices as $service): ?>
                                 <option
@@ -539,7 +575,7 @@ $bodyClass = $hasAvailabilityOperation && !$hasAppointmentOperation ? 'agenda-av
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="agenda-toolbar-field" id="calendarGroupQuickField" <?= $hasCalendarGroupServices && ($selectedCalendarServiceId <= 0 || $selectedCalendarServiceIsGroup) ? '' : 'style="display:none;"' ?>>
+                    <div class="agenda-toolbar-field" id="calendarGroupQuickField" <?= $hasCalendarGroupServices && $selectedCalendarServiceIsGroup ? '' : 'style="display:none;"' ?>>
                         <label for="calendarGroupQuick">Modelo de grupo</label>
                         <label class="form-check d-flex align-items-center gap-2 mb-0" style="min-height:38px;">
                             <input class="form-check-input mt-0" type="checkbox" name="modelo" id="calendarGroupQuick" value="rapido" checked>

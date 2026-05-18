@@ -5,6 +5,11 @@ if (app_request_method() !== 'POST') {
     app_redirect('pacientes.php');
 }
 
+if (app_is_professional_user()) {
+    app_flash('danger', 'Profissional pode cadastrar e editar dados basicos, mas nao pode excluir pacientes.');
+    app_redirect('pacientes.php');
+}
+
 $id = app_post_int('id');
 
 if ($id <= 0) {

@@ -69,7 +69,7 @@ usort($rankingByCancellation, static function (array $left, array $right): int {
 $topCancellation = $rankingByCancellation[0] ?? null;
 $selectedProfessionalLabel = $selectedProfessional['nome'] ?? 'Todos os profissionais';
 $periodLabel = $periodOptions[$reportRange['period']] ?? 'Semanal';
-$generatedAt = date('d/m/Y H:i');
+$generatedAt = app_report_issued_at();
 $reportTitle = 'Relatorio gerencial da agenda';
 $reportSubtitle = $periodLabel . ' | ' . $reportRange['label'] . ' | ' . $selectedProfessionalLabel;
 $fileBaseName = agenda_gerencial_slug(
@@ -86,14 +86,43 @@ $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JS
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="assets/clinic-modern.css" rel="stylesheet">
 <link href="assets/agenda-gerencial.css" rel="stylesheet">
+<style>
+<?= app_report_print_header_css() ?>
+@media print {
+    .agenda-gerencial-page,
+    .agenda-gerencial-shell,
+    .agenda-gerencial-report-panel {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        background: #fff !important;
+    }
+    .agenda-gerencial-panel:not(.agenda-gerencial-report-panel) {
+        display: none !important;
+    }
+    .agenda-gerencial-capture {
+        padding: 0 !important;
+        border-radius: 0 !important;
+    }
+    .agenda-gerencial-summary,
+    .agenda-gerencial-highlights {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+}
+</style>
 </head>
-<body>
+<body class="app-print-page">
 
 <?php include 'partials/menu.php'; ?>
 
 <div class="container agenda-gerencial-page">
     <div class="agenda-gerencial-shell">
-        <section class="agenda-gerencial-panel agenda-gerencial-hero">
+        <section class="agenda-gerencial-panel agenda-gerencial-hero app-print-hide">
             <div>
                 <h1><?= app_h($reportTitle) ?></h1>
                 <p>Resumo executivo da agenda com volume de atendimentos, cancelamentos, pendencias e ranking por profissional.</p>
@@ -102,14 +131,12 @@ $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JS
             <div class="agenda-gerencial-actions">
                 <a class="btn btn-outline-secondary" href="secretaria_agenda.php">Voltar para agenda</a>
                 <button type="button" class="btn btn-outline-dark" data-report-action="print">Imprimir</button>
-                <button type="button" class="btn btn-outline-primary" data-report-action="pdf">Exportar PDF</button>
                 <button type="button" class="btn btn-outline-primary" data-report-action="jpg">Exportar JPG</button>
-                <button type="button" class="btn btn-success" data-report-action="whatsapp-pdf">WhatsApp PDF</button>
                 <button type="button" class="btn btn-success" data-report-action="whatsapp-jpg">WhatsApp JPG</button>
             </div>
         </section>
 
-        <section class="agenda-gerencial-panel agenda-gerencial-filters">
+        <section class="agenda-gerencial-panel agenda-gerencial-filters app-print-hide">
             <form method="GET">
                 <div class="agenda-gerencial-filter-grid">
                     <div>
@@ -143,9 +170,14 @@ $jsonFlags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JS
             </form>
         </section>
 
-        <section class="agenda-gerencial-panel">
-            <div class="agenda-gerencial-capture" id="agendaGerencialCapture">
-                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+        <section class="agenda-gerencial-panel agenda-gerencial-report-panel">
+            <div class="agenda-gerencial-capture app-print-report-area" id="agendaGerencialCapture">
+                <?= app_report_print_header($conn, $reportTitle, [$reportSubtitle], [
+                    'Atendidos: ' . (int) ($overview['total_realizado'] ?? 0),
+                    'Cancelados: ' . (int) ($overview['total_cancelado'] ?? 0),
+                    'Total no periodo: ' . (int) ($overview['total_registros'] ?? 0),
+                ], $generatedAt) ?>
+                <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3 app-print-hide">
                     <div>
                         <h2 class="h4 mb-1"><?= app_h($reportTitle) ?></h2>
                         <p class="text-muted mb-0"><?= app_h($reportSubtitle) ?></p>

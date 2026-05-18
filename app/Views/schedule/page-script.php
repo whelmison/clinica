@@ -13,11 +13,19 @@ const initialFlashType = <?= !empty($scheduleFlash['type']) ? json_encode((strin
 const scheduleModeButtons = document.querySelectorAll('[data-schedule-mode]');
 const calendarFilterForm = document.getElementById('calendarFilterForm');
 const calendarProfessional = document.getElementById('calendarProfessional');
+const calendarProfessionalSearch = document.getElementById('calendarProfessionalSearch');
+const calendarProfessionalMenu = document.getElementById('calendarProfessionalMenu');
 const calendarService = document.getElementById('calendarService');
 const calendarServiceField = document.getElementById('calendarServiceField');
 const calendarGroupQuickField = document.getElementById('calendarGroupQuickField');
 const calendarGroupQuick = document.getElementById('calendarGroupQuick');
 const calendarFilterModalElement = document.getElementById('calendarFilterModal');
+const calendarProfessionalOptions = <?= json_encode(array_map(static fn (array $professional): array => [
+    'id' => (int) ($professional['id'] ?? 0),
+    'nome' => (string) ($professional['nome'] ?? ''),
+    'telefone' => (string) ($professional['telefone'] ?? ''),
+    'profissao' => (string) ($professional['profissao'] ?? ''),
+], $professionals), $jsonFlags) ?>;
 const appointmentForm = document.getElementById('appointmentForm');
 const appointmentFormHost = document.getElementById('appointmentFormHost');
 const appointmentModalElement = document.getElementById('appointmentModal');
@@ -148,6 +156,10 @@ function normalizePhoneDigits(phoneValue) {
     }
 
     return digits;
+}
+
+function onlyDigits(value) {
+    return String(value || '').replace(/\D+/g, '');
 }
 
 function buildAppointmentWhatsappUrl() {
@@ -762,6 +774,189 @@ function setupAppointmentPatientAutocomplete() {
     });
 }
 
+function closeCalendarProfessionalMenu() {
+    if (!calendarProfessionalMenu) {
+        return;
+    }
+
+    calendarProfessionalMenu.classList.remove('is-open');
+    calendarProfessionalMenu.innerHTML = '';
+}
+
+function setupCalendarProfessionalAutocomplete() {
+    if (!calendarProfessional || !calendarProfessionalSearch || !calendarProfessionalMenu) {
+        return;
+    }
+
+    let results = [];
+    let activeIndex = -1;
+
+    function setActiveOption(nextIndex) {
+        const options = Array.from(calendarProfessionalMenu.querySelectorAll('.autocomplete-option'));
+
+        if (!options.length) {
+            activeIndex = -1;
+            return;
+        }
+
+        activeIndex = (nextIndex + options.length) % options.length;
+
+        options.forEach((option, index) => {
+            option.classList.toggle('is-active', index === activeIndex);
+            option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+        });
+
+        options[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function chooseProfessional(professional) {
+        if (!professional) {
+            return;
+        }
+
+        calendarProfessional.value = String(professional.id || '');
+        calendarProfessionalSearch.value = professional.nome || '';
+        closeCalendarProfessionalMenu();
+
+        const update = updateCalendarServiceOptions(calendarProfessional.value);
+
+        Promise.resolve(update).then(() => {
+            const serviceOptions = calendarService
+                ? Array.from(calendarService.options).filter((option) => option.value !== '')
+                : [];
+
+            if (serviceOptions.length > 1) {
+                calendarService?.focus();
+                return;
+            }
+
+            if (autoSubmitProfessionalSelect && calendarFilterForm) {
+                calendarFilterForm.submit();
+            }
+        });
+    }
+
+    function render(items) {
+        results = items;
+        activeIndex = -1;
+        calendarProfessionalMenu.innerHTML = '';
+
+        if (!items.length) {
+            closeCalendarProfessionalMenu();
+            return;
+        }
+
+        items.forEach((professional, index) => {
+            const button = document.createElement('button');
+            const name = document.createElement('span');
+            const meta = document.createElement('span');
+            const metaParts = [];
+
+            button.type = 'button';
+            button.className = 'autocomplete-option';
+            button.setAttribute('role', 'option');
+            button.setAttribute('aria-selected', 'false');
+
+            name.className = 'autocomplete-option-name';
+            name.textContent = professional.nome || '';
+            button.appendChild(name);
+
+            if (professional.profissao) {
+                metaParts.push(professional.profissao);
+            }
+
+            if (professional.telefone) {
+                metaParts.push('Contato: ' + professional.telefone);
+            }
+
+            if (metaParts.length) {
+                meta.className = 'autocomplete-option-meta';
+                meta.textContent = metaParts.join(' | ');
+                button.appendChild(meta);
+            }
+
+            button.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+            });
+
+            button.addEventListener('click', () => {
+                chooseProfessional(results[index]);
+            });
+
+            calendarProfessionalMenu.appendChild(button);
+        });
+
+        calendarProfessionalMenu.classList.add('is-open');
+    }
+
+    function searchProfessionals(term) {
+        const normalizedTerm = term.toLocaleLowerCase('pt-BR');
+        const digits = onlyDigits(term);
+
+        return calendarProfessionalOptions
+            .filter((professional) => {
+                const name = String(professional.nome || '').toLocaleLowerCase('pt-BR');
+                const profession = String(professional.profissao || '').toLocaleLowerCase('pt-BR');
+                const phoneDigits = onlyDigits(professional.telefone || '');
+                const nameMatches = name.startsWith(normalizedTerm) || name.includes(' ' + normalizedTerm);
+
+                return nameMatches
+                    || profession.includes(normalizedTerm)
+                    || (digits.length >= 2 && phoneDigits.includes(digits));
+            })
+            .slice(0, 12);
+    }
+
+    calendarProfessionalSearch.addEventListener('input', () => {
+        const term = calendarProfessionalSearch.value.trim();
+        calendarProfessional.value = '';
+
+        if (term.length < 2) {
+            closeCalendarProfessionalMenu();
+            return;
+        }
+
+        render(searchProfessionals(term));
+    });
+
+    calendarProfessionalSearch.addEventListener('keydown', (event) => {
+        const isOpen = calendarProfessionalMenu.classList.contains('is-open');
+
+        if (event.key === 'ArrowDown' && results.length) {
+            event.preventDefault();
+
+            if (!isOpen) {
+                calendarProfessionalMenu.classList.add('is-open');
+            }
+
+            setActiveOption(activeIndex + 1);
+            return;
+        }
+
+        if (event.key === 'ArrowUp' && results.length) {
+            event.preventDefault();
+            setActiveOption(activeIndex <= 0 ? results.length - 1 : activeIndex - 1);
+            return;
+        }
+
+        if (event.key === 'Enter' && isOpen && activeIndex >= 0) {
+            event.preventDefault();
+            chooseProfessional(results[activeIndex]);
+            return;
+        }
+
+        if (event.key === 'Escape') {
+            closeCalendarProfessionalMenu();
+        }
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!calendarProfessionalMenu.contains(event.target) && event.target !== calendarProfessionalSearch) {
+            closeCalendarProfessionalMenu();
+        }
+    });
+}
+
 function resetAppointmentForm(dateValue = '', timeValue = '') {
     if (!appointmentForm) {
         return;
@@ -1318,6 +1513,7 @@ document.querySelectorAll('.calendar-availability').forEach((availabilityElement
 });
 
 setupAppointmentPatientAutocomplete();
+setupCalendarProfessionalAutocomplete();
 
 if (appointmentService) {
     appointmentService.addEventListener('change', updateAppointmentModalCopy);
@@ -1437,10 +1633,10 @@ if (autoSubmitProfessionalSelect && calendarFilterForm && calendarProfessional &
 
 function updateCalendarServiceOptions(professionalId, selectedServiceId = '') {
     if (!calendarService || !professionalId) {
-        return;
+        return Promise.resolve([]);
     }
 
-    fetch('buscar_servicos_profissional.php?profissional_id=' + encodeURIComponent(professionalId))
+    return fetch('buscar_servicos_profissional.php?profissional_id=' + encodeURIComponent(professionalId))
         .then((response) => response.json())
         .then((services) => {
             calendarService.innerHTML = '<option value="">Selecione o servico</option>';
@@ -1459,8 +1655,9 @@ function updateCalendarServiceOptions(professionalId, selectedServiceId = '') {
             });
 
             syncCalendarServiceVisibility();
+            return services;
         })
-        .catch(() => {});
+        .catch(() => []);
 }
 
 function syncCalendarServiceVisibility() {
@@ -1470,19 +1667,23 @@ function syncCalendarServiceVisibility() {
 
     const serviceOptions = Array.from(calendarService.options).filter((option) => option.value !== '');
     const groupOptions = serviceOptions.filter((option) => (option.dataset.tipo || 'individual') === 'grupo');
-    const hasIndividual = serviceOptions.some((option) => (option.dataset.tipo || 'individual') !== 'grupo');
-    const shouldShow = groupOptions.length + (hasIndividual ? 1 : 0) > 1;
+    const shouldShow = serviceOptions.length > 1;
 
-    if (!shouldShow && groupOptions.length === 1 && !hasIndividual) {
-        groupOptions[0].selected = true;
+    if (!shouldShow && serviceOptions.length === 1) {
+        serviceOptions[0].selected = true;
     }
 
     calendarServiceField.style.display = shouldShow ? '' : 'none';
+    calendarService.required = shouldShow;
 
     if (calendarGroupQuickField) {
         const selected = calendarService.selectedOptions?.[0];
         const selectedIsGroup = (selected?.dataset.tipo || 'individual') === 'grupo';
         calendarGroupQuickField.style.display = groupOptions.length > 0 && selectedIsGroup ? '' : 'none';
+
+        if (calendarGroupQuick) {
+            calendarGroupQuick.disabled = !selectedIsGroup;
+        }
     }
 }
 
@@ -1511,15 +1712,38 @@ if (calendarService) {
 }
 
 if (calendarFilterForm && calendarService) {
-    calendarFilterForm.addEventListener('submit', () => {
+    calendarFilterForm.addEventListener('submit', (event) => {
+        if (calendarProfessional && !calendarProfessional.value) {
+            event.preventDefault();
+            showInlineNotice('Escolha um profissional da lista.', 'warning');
+            calendarProfessionalSearch?.focus();
+            return;
+        }
+
+        const serviceOptions = Array.from(calendarService.options).filter((option) => option.value !== '');
+        const requiresService = serviceOptions.length > 1;
+
+        if (requiresService && !calendarService.value) {
+            event.preventDefault();
+            calendarServiceField.style.display = '';
+            calendarService.required = true;
+            showInlineNotice('Escolha o servico deste profissional para continuar.', 'warning');
+            calendarService.focus();
+            return;
+        }
+
+        if (!requiresService && serviceOptions.length === 1 && !calendarService.value) {
+            serviceOptions[0].selected = true;
+        }
+
         const selected = calendarService.selectedOptions?.[0];
         const scheduleType = selected?.dataset.tipo || 'individual';
         calendarFilterForm.action = scheduleType === 'grupo'
             ? 'secretaria_agenda_grupo.php'
             : 'secretaria_agenda.php';
 
-        if (scheduleType === 'grupo' && calendarGroupQuick && calendarGroupQuick.checked) {
-            calendarGroupQuick.disabled = false;
+        if (calendarGroupQuick) {
+            calendarGroupQuick.disabled = !(scheduleType === 'grupo' && calendarGroupQuick.checked);
         }
     });
 }

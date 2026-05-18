@@ -119,7 +119,8 @@ final class GuideRepository
     public function optionLists(?int $scopeProfessionalId = null): array
     {
         $clinicId = $this->clinicId();
-        $patients = $this->pdo->prepare('SELECT id, nome FROM pacientes WHERE clinica_id = :clinic_id ORDER BY nome');
+        $patientScope = $scopeProfessionalId !== null ? app_professional_scope_exists_for_patient('p.id') : '';
+        $patients = $this->pdo->prepare('SELECT p.id, p.nome FROM pacientes p WHERE p.clinica_id = :clinic_id ' . $patientScope . ' ORDER BY p.nome');
         $patients->execute([':clinic_id' => $clinicId]);
         $plans = $this->pdo->prepare('SELECT id, nome FROM planos WHERE clinica_id = :clinic_id ORDER BY nome');
         $plans->execute([':clinic_id' => $clinicId]);
@@ -205,6 +206,25 @@ final class GuideRepository
         ]);
 
         return (int) $this->pdo->lastInsertId();
+    }
+
+    public function linkPatientProfessional(int $patientId, int $professionalId, string $origin = 'guia'): void
+    {
+        if ($patientId <= 0 || $professionalId <= 0) {
+            return;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+             VALUES (:clinic_id, :paciente_id, :profissional_id, :origem)
+             ON DUPLICATE KEY UPDATE origem = VALUES(origem)'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':paciente_id' => $patientId,
+            ':profissional_id' => $professionalId,
+            ':origem' => $origin,
+        ]);
     }
 
     public function update(int $id, array $data): void

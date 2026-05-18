@@ -595,11 +595,30 @@ function app_professional_scope_exists_for_patient(string $patientColumn): strin
     }
 
     return ' AND EXISTS (
-        SELECT 1
-        FROM guias gp
+        SELECT 1 FROM paciente_profissionais pp
+        WHERE pp.paciente_id = ' . $patientColumn . '
+        AND pp.clinica_id = ' . app_active_clinic_id() . '
+        AND pp.profissional_id = ' . $professionalId . '
+        UNION ALL
+        SELECT 1 FROM guias gp
         WHERE gp.paciente_id = ' . $patientColumn . '
         AND gp.clinica_id = ' . app_active_clinic_id() . '
         AND gp.profissional_id = ' . $professionalId . '
+        UNION ALL
+        SELECT 1 FROM agenda agp
+        WHERE agp.cliente_id = ' . $patientColumn . '
+        AND agp.clinica_id = ' . app_active_clinic_id() . '
+        AND agp.profissional_id = ' . $professionalId . '
+        UNION ALL
+        SELECT 1 FROM paciente_fichas_avaliacao fa
+        WHERE fa.paciente_id = ' . $patientColumn . '
+        AND fa.clinica_id = ' . app_active_clinic_id() . '
+        AND fa.profissional_id = ' . $professionalId . '
+        UNION ALL
+        SELECT 1 FROM paciente_fichas_evolucao fe
+        WHERE fe.paciente_id = ' . $patientColumn . '
+        AND fe.clinica_id = ' . app_active_clinic_id() . '
+        AND fe.profissional_id = ' . $professionalId . '
     ) ';
 }
 

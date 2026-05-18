@@ -187,6 +187,7 @@ $isDefaultUserForm = !empty($userFormValues['usuario_padrao']);
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <button type="button" class="btn btn-success btn-sm rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#userFormModal">+ Novo usuario</button>
+                <a href="administrativo_permissoes.php" class="btn btn-outline-light btn-sm rounded-pill px-3">Permissoes</a>
                 <a href="administrativo_profissionais.php" class="btn btn-light btn-sm rounded-pill px-3">Profissionais</a>
             </div>
         </div>
@@ -260,6 +261,7 @@ $isDefaultUserForm = !empty($userFormValues['usuario_padrao']);
                             <td class="text-end">
                                 <div class="d-inline-flex gap-2">
                                     <a class="btn btn-sm btn-outline-primary" href="administrativo_usuarios.php?<?= app_h(app_build_query(['user_id' => $user['id'], 'busca_usuario' => $userFilters['busca_usuario'], 'user_page' => $usersPagination['page'] > 1 ? $usersPagination['page'] : null])) ?>">Editar</a>
+                                    <a class="btn btn-sm btn-outline-secondary" href="administrativo_permissoes.php?<?= app_h(app_build_query(['perfil' => (string) $user['perfil'], 'usuario_id' => (int) $user['id']])) ?>">Permissoes</a>
                                     <form method="POST" onsubmit="return confirm('Excluir este usuario?')">
                                         <input type="hidden" name="action" value="delete_user">
                                         <input type="hidden" name="user_id" value="<?= (int) $user['id'] ?>">

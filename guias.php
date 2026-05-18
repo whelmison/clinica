@@ -21,6 +21,8 @@ $editGuide = null;
 $editMessage = '';
 $autoOpenEditGuideModal = false;
 $isGuidePost = app_request_method() === 'POST';
+$guideProfessionalScopeId = app_is_professional_user() ? (app_current_professional_id() ?? 0) : null;
+$canCreateLegacyGuides = $canManageLegacyGuides || $guideProfessionalScopeId !== null;
 $guideFilters = [
     'paciente' => trim((string) ($isGuidePost ? app_request_post('filter_paciente', '') : app_request_query('paciente', ''))),
     'guia' => trim((string) ($isGuidePost ? app_request_post('filter_guia', '') : app_request_query('guia', ''))),
@@ -33,9 +35,16 @@ $guideFilters = [
 $guideFilters['status_guia'] = $guideFilters['status_guia'] !== ''
     ? app_normalize_guide_operational_status($guideFilters['status_guia'])
     : '';
+
+if ($guideProfessionalScopeId !== null) {
+    $guideFilters['profissional_id'] = $guideProfessionalScopeId;
+    $guideFormValues['profissional_id'] = $guideProfessionalScopeId;
+}
+
 $shouldLoadGuides = app_request_query('filtrar', '') === '1'
     || ($isGuidePost && app_request_post('filter_filtrar', '') === '1')
-    || $editGuideId > 0;
+    || $editGuideId > 0
+    || app_is_professional_user();
 $professionalsForFilter = app_stmt_all($conn, 'SELECT id, nome FROM profissionais WHERE clinica_id = ? ORDER BY nome', 'i', [$clinicId]);
 $plansForModal = app_stmt_all($conn, 'SELECT id, nome FROM planos WHERE clinica_id = ? ORDER BY nome', 'i', [$clinicId]);
 $guideOperationalStatuses = app_guide_operational_statuses();
@@ -93,22 +102,24 @@ if (!function_exists('app_legacy_guide_locked_for_edit')) {
 }
 
 if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'save_legacy_guide') {
-    if (!$canManageLegacyGuides) {
+    if (!$canCreateLegacyGuides) {
         app_flash('danger', 'Sem permissao para cadastrar guias.');
         app_redirect('guias.php');
     }
 
     $guideFormValues = [
         'paciente_id' => app_post_int('paciente_id'),
-        'profissional_id' => app_post_int('profissional_id'),
+        'profissional_id' => $guideProfessionalScopeId ?? app_post_int('profissional_id'),
         'servico_id' => app_post_int('servico_id'),
         'plano_id' => app_post_int('plano_id'),
         'codigo' => trim((string) ($_POST['codigo'] ?? '')),
         'total_sessoes' => app_post_int('total_sessoes'),
         'valor_guia' => (string) ($_POST['valor_guia'] ?? ''),
         'data' => (string) ($_POST['data'] ?? date('Y-m-d')),
-        'autorizada' => isset($_POST['autorizada']) ? 1 : 0,
-        'status_operacional' => app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'aguardando_autorizacao')),
+        'autorizada' => $guideProfessionalScopeId !== null ? 0 : (isset($_POST['autorizada']) ? 1 : 0),
+        'status_operacional' => $guideProfessionalScopeId !== null
+            ? 'aguardando_autorizacao'
+            : app_normalize_guide_operational_status((string) ($_POST['status_operacional'] ?? 'aguardando_autorizacao')),
     ];
 
     if ($guideFormValues['status_operacional'] === 'cancelada') {
@@ -236,6 +247,11 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'authorize_l
                 'sii',
                 ['autorizada', $clinicId, $guideId]
             );
+
+            if ($ok) {
+                app_create_receivable_for_guide($conn, $guideId);
+            }
+
             app_flash($ok ? 'success' : 'danger', $ok ? 'Guia autorizada com sucesso.' : 'Nao foi possivel autorizar a guia.');
         }
     }
@@ -244,14 +260,14 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'authorize_l
 }
 
 if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_legacy_guide') {
-    if (!$canManageLegacyGuides) {
+    if (!$canManageLegacyGuides && $guideProfessionalScopeId === null) {
         app_flash('danger', 'Sem permissao para editar guias.');
         app_redirect('guias.php');
     }
 
     $guideId = app_post_int('guide_id');
     $codigo = trim((string) ($_POST['codigo'] ?? ''));
-    $profissionalId = app_post_int('profissional_id');
+    $profissionalId = $guideProfessionalScopeId ?? app_post_int('profissional_id');
     $servicoId = app_post_int('servico_id');
     $planoId = app_post_int('plano_id');
     $data = (string) ($_POST['data'] ?? date('Y-m-d'));
@@ -270,9 +286,10 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 
     $editGuide = app_stmt_one(
         $conn,
-        'SELECT g.*, pl.nome AS plano, s.nome AS servico_nome,
+        'SELECT g.*, pl.nome AS plano, s.nome AS servico_nome, pr.nome AS profissional_nome,
                 COALESCE(a.usadas, 0) AS usadas
          FROM guias g
+         LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
          LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
          LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
          LEFT JOIN (
@@ -289,6 +306,9 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 
     if (!$editGuide) {
         $editMessage = 'Guia nao encontrada.';
+    } elseif ($guideProfessionalScopeId !== null && (int) ($editGuide['profissional_id'] ?? 0) !== (int) $guideProfessionalScopeId) {
+        app_flash('danger', 'Sem permissao para editar esta guia.');
+        app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
     } elseif (app_legacy_guide_locked_for_edit($editGuide)) {
         $editMessage = 'Esta guia ja esta em uso ou finalizada e nao pode ser alterada.';
     } elseif ($codigo === '') {
@@ -302,6 +322,12 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
     } elseif ($total <= 0) {
         $editMessage = 'Quantidade de sessoes deve ser maior que zero.';
     } else {
+        if ($guideProfessionalScopeId !== null) {
+            $profissionalId = (int) $guideProfessionalScopeId;
+            $autorizada = (int) ($editGuide['autorizada'] ?? 0);
+            $statusOperacional = app_normalize_guide_operational_status((string) ($editGuide['status_operacional'] ?? 'aguardando_autorizacao'));
+        }
+
         $exists = app_stmt_one($conn, 'SELECT id FROM guias WHERE clinica_id = ? AND codigo = ? AND id != ? LIMIT 1', 'isi', [$clinicId, $codigo, $guideId]);
 
         if ($exists) {
@@ -342,10 +368,11 @@ if (app_request_method() === 'POST' && ($_POST['action'] ?? '') === 'update_lega
 if ($editGuideId > 0 && !$editGuide) {
     $editGuide = app_stmt_one(
         $conn,
-        'SELECT g.*, p.nome AS paciente_nome, pl.nome AS plano, s.nome AS servico_nome,
+        'SELECT g.*, p.nome AS paciente_nome, pr.nome AS profissional_nome, pl.nome AS plano, s.nome AS servico_nome,
                 COALESCE(a.usadas, 0) AS usadas
          FROM guias g
          LEFT JOIN pacientes p ON p.id = g.paciente_id AND p.clinica_id = g.clinica_id
+         LEFT JOIN profissionais pr ON pr.id = g.profissional_id AND pr.clinica_id = g.clinica_id
          LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
          LEFT JOIN servicos s ON s.id = g.servico_id AND s.clinica_id = g.clinica_id
          LEFT JOIN (
@@ -359,8 +386,36 @@ if ($editGuideId > 0 && !$editGuide) {
         'iii',
         [$clinicId, $clinicId, $editGuideId]
     );
+    if ($editGuide && $guideProfessionalScopeId !== null && (int) ($editGuide['profissional_id'] ?? 0) !== (int) $guideProfessionalScopeId) {
+        $editGuide = null;
+        app_flash('danger', 'Guia nao encontrada.');
+        app_redirect('guias.php?' . app_legacy_guide_filter_query($guideFilters));
+    }
     $autoOpenEditGuideModal = $editGuide !== null;
 }
+$guideReportProfessionalLabel = '';
+foreach ($professionalsForFilter as $professional) {
+    if ((int) $professional['id'] === (int) ($guideFilters['profissional_id'] ?? 0)) {
+        $guideReportProfessionalLabel = (string) $professional['nome'];
+        break;
+    }
+}
+$guideFormProfessionalName = '';
+foreach ($professionalsForFilter as $professional) {
+    if ((int) $professional['id'] === (int) ($guideFormValues['profissional_id'] ?? 0)) {
+        $guideFormProfessionalName = (string) $professional['nome'];
+        break;
+    }
+}
+$guideReportLines = array_values(array_filter([
+    trim((string) ($guideFilters['paciente'] ?? '')) !== '' ? 'Paciente: ' . trim((string) $guideFilters['paciente']) : 'Todos os pacientes',
+    trim((string) ($guideFilters['guia'] ?? '')) !== '' ? 'Guia: ' . trim((string) $guideFilters['guia']) : '',
+    $guideReportProfessionalLabel !== '' ? 'Profissional: ' . $guideReportProfessionalLabel : '',
+    trim((string) ($guideFilters['status_guia'] ?? '')) !== '' ? 'Status operacional: ' . ($guideOperationalStatuses[$guideFilters['status_guia']] ?? $guideFilters['status_guia']) : '',
+    trim((string) ($guideFilters['status_financeiro'] ?? '')) !== '' ? 'Situacao: ' . trim((string) $guideFilters['status_financeiro']) : '',
+    trim((string) ($guideFilters['autorizada'] ?? '')) !== '' ? 'Autorizada: ' . ($guideFilters['autorizada'] === '1' ? 'Sim' : 'Nao') : '',
+    trim((string) ($guideFilters['mes'] ?? '')) !== '' ? 'Mes: ' . trim((string) $guideFilters['mes']) : '',
+]));
 ?>
 <!DOCTYPE html>
 <html>
@@ -555,6 +610,54 @@ tr.status-danger { background: #ffe3e6; }
     font-size: 0.8rem;
 }
 
+.guide-totals-cell {
+    padding: 0.62rem !important;
+    background: #f6fafb !important;
+}
+
+.guide-totals-strip {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: 0.45rem;
+}
+
+.guide-total-item {
+    border: 1px solid rgba(18, 73, 88, 0.08);
+    border-radius: 14px;
+    background: #fff;
+    padding: 0.48rem 0.6rem;
+    box-shadow: 0 8px 18px rgba(24, 56, 69, 0.06);
+}
+
+.guide-total-item span {
+    display: block;
+    margin-bottom: 0.12rem;
+    color: #68828f;
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.guide-total-item strong {
+    display: block;
+    color: #16333f;
+    font-size: 0.86rem;
+    line-height: 1.12;
+}
+
+.guide-total-item.is-danger strong {
+    color: #b42318;
+}
+
+.guide-total-item.is-success strong {
+    color: #146c43;
+}
+
+.guide-total-item.is-balance strong {
+    color: #0f4c5c;
+}
+
 .guide-shortcuts {
     color: #68828f;
     font-size: 0.72rem;
@@ -569,22 +672,90 @@ tr.status-danger { background: #ffe3e6; }
     .guide-top-actions {
         justify-content: flex-start;
     }
+
+    .guide-totals-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
+@media (max-width: 560px) {
+    .guide-totals-strip {
+        grid-template-columns: 1fr;
+    }
+}
+
+<?= app_report_print_header_css() ?>
 @media print {
-button, select, a { display: none !important; }
+    .guide-shell {
+        padding: 0 !important;
+    }
+    body.app-print-page #guidesReportArea table {
+        table-layout: fixed;
+        font-size: 7.8pt;
+    }
+    body.app-print-page #guidesReportArea table th,
+    body.app-print-page #guidesReportArea table td {
+        padding: 4px 5px !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.18;
+        vertical-align: top;
+    }
+    body.app-print-page #guidesReportArea .valor {
+        white-space: nowrap;
+    }
+    body.app-print-page #guidesReportArea .guide-print-hide {
+        display: none !important;
+    }
+    body.app-print-page #guidesReportArea .badge-status {
+        max-width: 100%;
+        padding: 2px 5px;
+        border-radius: 5px;
+        white-space: normal;
+        line-height: 1.12;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(1),
+    body.app-print-page #guidesReportArea td:nth-child(1) {
+        width: 8%;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(2),
+    body.app-print-page #guidesReportArea td:nth-child(2) {
+        width: 23%;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(3),
+    body.app-print-page #guidesReportArea td:nth-child(3) {
+        width: 21%;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(4),
+    body.app-print-page #guidesReportArea td:nth-child(4) {
+        width: 8%;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(8),
+    body.app-print-page #guidesReportArea td:nth-child(8) {
+        width: 14%;
+    }
+    body.app-print-page #guidesReportArea th:nth-child(10),
+    body.app-print-page #guidesReportArea td:nth-child(10),
+    body.app-print-page #guidesReportArea th:nth-child(11),
+    body.app-print-page #guidesReportArea td:nth-child(11),
+    body.app-print-page #guidesReportArea th:nth-child(14),
+    body.app-print-page #guidesReportArea td:nth-child(14),
+    body.app-print-page #guidesReportArea th:nth-child(15),
+    body.app-print-page #guidesReportArea td:nth-child(15) {
+        width: 7%;
+    }
 }
 </style>
 
 </head>
 
-<body>
+<body class="app-print-page">
 
 <?php include 'partials/menu.php'; ?>
 
 <div class="container-fluid guide-shell">
 
-<section class="guide-topbar mb-3">
+<section class="guide-topbar mb-3 app-print-hide">
 <div>
 <p class="guide-kicker">Gestao de guias</p>
 <h3>Guias</h3>
@@ -593,13 +764,13 @@ button, select, a { display: none !important; }
 <div class="guide-top-actions">
 <button type="submit" form="guideFilterForm" name="filtrar" value="1" class="btn btn-light text-secondary">Filtrar</button>
 <a href="guias.php" class="btn btn-outline-light">Limpar filtro</a>
-<?php if ($canManageLegacyGuides): ?>
+<?php if ($canCreateLegacyGuides): ?>
 <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#novaGuiaModal">+ Nova Guia</button>
 <?php endif; ?>
 <div class="dropdown">
 <button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Acoes</button>
 <ul class="dropdown-menu dropdown-menu-end">
-<li><button class="dropdown-item" type="button" onclick="imprimir()">Exportar PDF</button></li>
+<li><button class="dropdown-item" type="button" onclick="imprimir()">Imprimir relatorio</button></li>
 <li><button class="dropdown-item" type="button" onclick="exportarJpg()">Exportar JPG</button></li>
 <li><button class="dropdown-item" type="button" onclick="enviarWhatsappJpg()">Enviar WhatsApp JPG</button></li>
 </ul>
@@ -607,7 +778,7 @@ button, select, a { display: none !important; }
 </div>
 </section>
 
-<div class="guide-filter-card p-2 mb-3">
+<div class="guide-filter-card p-2 mb-3 app-print-hide">
 <form method="GET" id="guideFilterForm" class="row g-2 align-items-end">
 
 <div class="col-md-3">
@@ -625,12 +796,17 @@ button, select, a { display: none !important; }
 
 <div class="col-md-2">
 <label class="form-label small text-muted">Profissional</label>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" id="fProfissional" name="profissional_id" value="<?= (int) $guideProfessionalScopeId ?>">
+<input type="text" class="form-control" value="<?= app_h((string) ($guideReportProfessionalLabel ?: 'Meu perfil profissional')) ?>" readonly>
+<?php else: ?>
 <select id="fProfissional" name="profissional_id" class="form-control">
 <option value="">Profissional</option>
 <?php foreach ($professionalsForFilter as $professional): ?>
 <option value="<?= (int) $professional['id'] ?>" <?= (int) $guideFilters['profissional_id'] === (int) $professional['id'] ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
 <?php endforeach; ?>
 </select>
+<?php endif; ?>
 </div>
 
 <div class="col-md-2">
@@ -674,7 +850,10 @@ button, select, a { display: none !important; }
 </form>
 </div>
 
-<div class="card p-3">
+<div class="card p-3 app-print-report-area" id="guidesReportArea">
+<?= app_report_print_header($conn, 'Guias', $guideReportLines, [
+    $shouldLoadGuides ? 'Resultado limitado a 500 guias' : 'Use os filtros para consultar as guias',
+]) ?>
 
 <table class="table table-bordered">
 
@@ -684,18 +863,18 @@ button, select, a { display: none !important; }
 <th>Paciente</th>
 <th>Profissional</th>
 <th>Data</th>
-<th>Sess</th>
-<th>Usadas</th>
-<th>Rest</th>
+<th class="guide-print-hide">Sess</th>
+<th class="guide-print-hide">Usadas</th>
+<th class="guide-print-hide">Rest</th>
 <th>Status operacional</th>
-<th>Autorizada</th>
+<th class="guide-print-hide">Autorizada</th>
 <th>Situacao</th>
 <th class="valor">Guia</th>
-<th class="valor">Fat</th>
-<th class="valor">Glosa</th>
+<th class="valor guide-print-hide">Fat</th>
+<th class="valor guide-print-hide">Glosa</th>
 <th class="valor">Rec</th>
 <th class="valor">Saldo</th>
-<th>Acoes</th>
+<th class="app-print-actions">Acoes</th>
 </tr>
 </thead>
 
@@ -720,7 +899,11 @@ if ($shouldLoadGuides):
         $where[] = "g.data LIKE '{$mesFiltro}%'";
     }
 
-    if ($guideFilters['profissional_id'] > 0) {
+    if ($guideProfessionalScopeId !== null) {
+        $where[] = $guideProfessionalScopeId > 0
+            ? 'g.profissional_id = ' . (int) $guideProfessionalScopeId
+            : '1 = 0';
+    } elseif ($guideFilters['profissional_id'] > 0) {
         $where[] = 'g.profissional_id = ' . (int) $guideFilters['profissional_id'];
     }
 
@@ -796,9 +979,12 @@ while ($g = $res->fetch_assoc()):
     $editGuideUrl = 'guias.php?' . app_legacy_guide_filter_query($guideFilters, ['edit_id' => (int) $g['id']]);
     $editGuideUrlEsc = htmlspecialchars($editGuideUrl, ENT_QUOTES);
     $lockedForEdit = app_legacy_guide_locked_for_edit($g);
-    $editButton = $lockedForEdit
+    $canEditThisGuide = $canManageLegacyGuides || ($guideProfessionalScopeId !== null && (int) ($g['profissional_id'] ?? 0) === (int) $guideProfessionalScopeId);
+    $editButton = !$canEditThisGuide
+        ? "<span class='text-muted small'>Somente leitura</span>"
+        : ($lockedForEdit
         ? "<span class='btn btn-sm btn-outline-secondary disabled' title='Guia em uso ou finalizada nao pode ser alterada'>Bloqueada</span>"
-        : "<a href='{$editGuideUrlEsc}' class='btn btn-sm btn-outline-primary'>Editar</a>";
+        : "<a href='{$editGuideUrlEsc}' class='btn btn-sm btn-outline-primary'>Editar</a>");
     $deleteButton = $lockedForEdit
         ? "<span class='btn btn-sm btn-outline-secondary disabled' title='Guia em uso ou finalizada nao pode ser excluida'>Excluir</span>"
         : "<form method='POST' action='excluir_guia.php' class='d-inline' onsubmit=\"return confirm('Excluir esta guia?')\">
@@ -839,15 +1025,15 @@ while ($g = $res->fetch_assoc()):
     <td>{$g['paciente_nome']}</td>
     <td>{$g['profissional_nome']}</td>
     <td>" . date('d/m/Y', strtotime($g['data'])) . "</td>
-    <td>{$g['total_sessoes']}</td>
-    <td>$usadas</td>
-    <td>$restantes</td>
+    <td class='guide-print-hide'>{$g['total_sessoes']}</td>
+    <td class='guide-print-hide'>$usadas</td>
+    <td class='guide-print-hide'>$restantes</td>
     <td>$badgeStatusGuia</td>
-    <td>$badgeAutorizada</td>
+    <td class='guide-print-hide'>$badgeAutorizada</td>
     <td>$statusFin</td>
     <td class='valor'>" . number_format($g['valor_guia'], 2, ',', '.') . "</td>
-    <td class='valor'>" . number_format($valorFaturado, 2, ',', '.') . "</td>
-    <td class='valor text-danger'>" . number_format($valorGlosado, 2, ',', '.') . "</td>
+    <td class='valor guide-print-hide'>" . number_format($valorFaturado, 2, ',', '.') . "</td>
+    <td class='valor text-danger guide-print-hide'>" . number_format($valorGlosado, 2, ',', '.') . "</td>
     <td class='valor text-success'>" . number_format($g['recebido'], 2, ',', '.') . "</td>
     <td class='valor'>" . number_format($saldo, 2, ',', '.') . "</td>
     <td class='acoes'>
@@ -856,7 +1042,7 @@ while ($g = $res->fetch_assoc()):
     {$authorizeButton}
     {$deleteButton}
     <button onclick='baixar(this)' class='btn btn-sm btn-outline-success'>Baixar</button>"
-        : "<span class='text-muted small'>Somente leitura</span>") . "
+        : $editButton) . "
     </td>
     </tr>";
 endwhile;
@@ -873,7 +1059,9 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <tfoot>
 <tr>
-<td colspan="16" id="totais">Totais</td>
+<td colspan="16" class="guide-totals-cell">
+<div id="totais" class="guide-totals-strip"></div>
+</td>
 </tr>
 </tfoot>
 
@@ -883,7 +1071,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 </div>
 
-<?php if ($canManageLegacyGuides): ?>
+<?php if ($canCreateLegacyGuides): ?>
 <div class="modal fade guide-modal" id="novaGuiaModal" tabindex="-1" aria-labelledby="novaGuiaModalLabel" aria-hidden="true">
 <div class="modal-dialog modal-lg modal-dialog-centered">
 <div class="modal-content">
@@ -924,12 +1112,19 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <div class="col-md-6">
 <label class="form-label">Profissional</label>
-<select name="profissional_id" id="profissional" class="form-control" required title="Profissional responsavel por atender esta guia.">
-<option value="">Selecione</option>
-<?php foreach ($professionalsForFilter as $professional): ?>
-<option value="<?= (int) $professional['id'] ?>" <?= (int) $guideFormValues['profissional_id'] === (int) $professional['id'] ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
-<?php endforeach; ?>
-</select>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="profissional_id" id="profissional" value="<?= (int) $guideProfessionalScopeId ?>">
+<input type="text" class="form-control readonly" value="<?= app_h((string) ($guideReportProfessionalLabel ?: 'Meu perfil profissional')) ?>" readonly>
+<?php else: ?>
+<input type="hidden" name="profissional_id" id="profissional" value="<?= (int) $guideFormValues['profissional_id'] ?>">
+<div class="autocomplete-wrap">
+<input type="text" id="profissionalBusca" class="form-control" autocomplete="off" required
+       value="<?= app_h($guideFormProfessionalName) ?>"
+       title="Digite parte do nome e escolha o profissional da lista."
+       placeholder="Digite para buscar o profissional">
+<div class="autocomplete-menu" id="profissionalBuscaMenu"></div>
+</div>
+<?php endif; ?>
 </div>
 
 <div class="col-md-6">
@@ -965,13 +1160,16 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
        title="Data em que a guia foi emitida ou cadastrada.">
 </div>
 
-<div class="col-md-6">
+<div class="col-md-6 <?= $guideProfessionalScopeId !== null ? 'd-none' : '' ?>">
 <label class="form-label">Status operacional</label>
 <select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
 <?php foreach ($guideOperationalStatuses as $statusValue => $statusLabel): ?>
 <option value="<?= app_h($statusValue) ?>" <?= ($guideFormValues['status_operacional'] ?? 'aguardando_autorizacao') === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
 <?php endforeach; ?>
 </select>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="status_operacional" value="aguardando_autorizacao">
+<?php endif; ?>
 </div>
 
 <div class="col-md-6">
@@ -981,12 +1179,15 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <div id="valorGuiaHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
 </div>
 
-<div class="col-md-6 d-flex align-items-end">
+<div class="col-md-6 d-flex align-items-end <?= $guideProfessionalScopeId !== null ? 'd-none' : '' ?>">
 <div class="form-check pb-2">
 <input class="form-check-input" type="checkbox" name="autorizada" id="guiaAutorizada" <?= (int) ($guideFormValues['autorizada'] ?? 0) === 1 ? 'checked' : '' ?>
        title="Somente guias autorizadas podem gerar atendimento realizado.">
 <label class="form-check-label" for="guiaAutorizada">Guia autorizada</label>
 </div>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="autorizada" value="0">
+<?php endif; ?>
 </div>
 </div>
 </form>
@@ -1001,7 +1202,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 </div>
 <?php endif; ?>
 
-<?php if ($canManageLegacyGuides && $editGuide): ?>
+<?php if ($editGuide && ($canManageLegacyGuides || ($guideProfessionalScopeId !== null && (int) ($editGuide['profissional_id'] ?? 0) === (int) $guideProfessionalScopeId))): ?>
 <?php $editGuideLocked = app_legacy_guide_locked_for_edit($editGuide); ?>
 <div class="modal fade guide-modal" id="editarGuiaModal" tabindex="-1" aria-labelledby="editarGuiaModalLabel" aria-hidden="true">
 <div class="modal-dialog modal-lg modal-dialog-centered">
@@ -1043,12 +1244,17 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 
 <div class="col-md-6">
 <label class="form-label">Profissional</label>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="profissional_id" id="editProfissional" value="<?= (int) $guideProfessionalScopeId ?>">
+<input class="form-control readonly" value="<?= app_h((string) ($editGuide['profissional_nome'] ?? $guideReportProfessionalLabel ?: 'Meu perfil profissional')) ?>" readonly title="Profissional responsavel por atender esta guia.">
+<?php else: ?>
 <select name="profissional_id" id="editProfissional" class="form-control" required title="Profissional responsavel por atender esta guia.">
 <option value="">Selecione</option>
 <?php foreach ($professionalsForFilter as $professional): ?>
 <option value="<?= (int) $professional['id'] ?>" <?= (int) ($editGuide['profissional_id'] ?? 0) === (int) $professional['id'] ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
 <?php endforeach; ?>
 </select>
+<?php endif; ?>
 </div>
 
 <div class="col-md-6">
@@ -1088,7 +1294,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <input type="date" name="data" class="form-control" value="<?= app_h((string) $editGuide['data']) ?>" title="Data em que a guia foi emitida ou cadastrada.">
 </div>
 
-<div class="col-md-3">
+<div class="col-md-3 <?= $guideProfessionalScopeId !== null ? 'd-none' : '' ?>">
 <label class="form-label">Status operacional</label>
 <select name="status_operacional" class="form-control" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
 <?php $editStatusOperacional = app_normalize_guide_operational_status((string) ($editGuide['status_operacional'] ?? 'aguardando_autorizacao')); ?>
@@ -1096,6 +1302,9 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <option value="<?= app_h($statusValue) ?>" <?= $editStatusOperacional === $statusValue ? 'selected' : '' ?>><?= app_h($statusLabel) ?></option>
 <?php endforeach; ?>
 </select>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="status_operacional" value="<?= app_h($editStatusOperacional) ?>">
+<?php endif; ?>
 </div>
 
 <div class="col-md-3">
@@ -1104,12 +1313,15 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar as guia
 <div id="editValorGuiaHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
 </div>
 
-<div class="col-md-6 d-flex align-items-end">
+<div class="col-md-6 d-flex align-items-end <?= $guideProfessionalScopeId !== null ? 'd-none' : '' ?>">
 <div class="form-check pb-2">
 <input class="form-check-input" type="checkbox" name="autorizada" id="editGuiaAutorizada" <?= (int) ($editGuide['autorizada'] ?? 0) === 1 ? 'checked' : '' ?>
        title="Somente guias autorizadas podem gerar atendimento realizado.">
 <label class="form-check-label" for="editGuiaAutorizada">Guia autorizada</label>
 </div>
+<?php if ($guideProfessionalScopeId !== null): ?>
+<input type="hidden" name="autorizada" value="<?= (int) ($editGuide['autorizada'] ?? 0) ?>">
+<?php endif; ?>
 </div>
 </div>
 </fieldset>
@@ -1178,6 +1390,15 @@ function moedaParaNumero(valor) {
     return parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0;
 }
 
+const guiaMoneyFormatter = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+function guiaTotalItem(label, value, className = '') {
+    return '<div class="guide-total-item ' + className + '">'
+        + '<span>' + label + '</span>'
+        + '<strong>' + guiaMoneyFormatter.format(value) + '</strong>'
+        + '</div>';
+}
+
 function totais() {
     let prev = 0, fat = 0, glo = 0, rec = 0, sal = 0;
 
@@ -1192,11 +1413,11 @@ function totais() {
     });
 
     document.getElementById("totais").innerHTML =
-    "Previsto: R$ " + prev.toFixed(2) +
-    " | Faturado: R$ " + fat.toFixed(2) +
-    " | <span style='color:red'>Glosa: R$ " + glo.toFixed(2) + "</span>" +
-    " | Recebido: R$ " + rec.toFixed(2) +
-    " | Saldo: R$ " + sal.toFixed(2);
+        guiaTotalItem('Previsto', prev) +
+        guiaTotalItem('Faturado', fat) +
+        guiaTotalItem('Glosa', glo, 'is-danger') +
+        guiaTotalItem('Recebido', rec, 'is-success') +
+        guiaTotalItem('Saldo', sal, 'is-balance');
 }
 
 function baixar(btn) {
@@ -1384,11 +1605,14 @@ const valorGuiaHelp = document.getElementById('valorGuiaHelp');
 const novaGuiaForm = document.getElementById('novaGuiaForm');
 const pacienteBusca = document.getElementById('pacienteBusca');
 const pacienteId = document.getElementById('paciente_id');
+const profissionalBusca = document.getElementById('profissionalBusca');
 const novaGuiaModal = document.getElementById('novaGuiaModal');
 let pacientesAutocomplete = [];
 let guideModalDataLoaded = false;
 const selectedGuideForm = {
     pacienteId: <?= (int) $guideFormValues['paciente_id'] ?>,
+    profissionalId: <?= (int) $guideFormValues['profissional_id'] ?>,
+    profissionalNome: <?= json_encode($guideFormProfessionalName, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>,
     planoId: <?= (int) $guideFormValues['plano_id'] ?>,
     servicoId: <?= (int) $guideFormValues['servico_id'] ?>
 };
@@ -1453,6 +1677,11 @@ async function carregarDadosModalGuia() {
 
     if (selectedGuideForm.pacienteId && pacienteBusca) {
         pacienteId.value = selectedGuideForm.pacienteId;
+    }
+
+    if (selectedGuideForm.profissionalId && profissionalBusca && profissional) {
+        profissional.value = selectedGuideForm.profissionalId;
+        profissionalBusca.value = selectedGuideForm.profissionalNome || profissionalBusca.value;
     }
 
     guideModalDataLoaded = true;
@@ -1532,10 +1761,89 @@ function setupPatientAutocomplete(input, menu, onSelect) {
     });
 }
 
+function setupProfessionalAutocomplete(input, menu, onSelect) {
+    if (!input || !menu) return;
+
+    let timer = null;
+    let controller = null;
+
+    function closeMenu() {
+        menu.classList.remove('is-open');
+        menu.innerHTML = '';
+    }
+
+    function render(items) {
+        menu.innerHTML = '';
+
+        if (!items.length) {
+            closeMenu();
+            return;
+        }
+
+        items.forEach((professional) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'autocomplete-option';
+            button.textContent = professional.nome;
+            button.addEventListener('click', () => {
+                input.value = professional.nome;
+                closeMenu();
+                onSelect(professional);
+            });
+            menu.appendChild(button);
+        });
+
+        menu.classList.add('is-open');
+    }
+
+    input.addEventListener('input', () => {
+        const term = input.value.trim();
+        onSelect(null);
+        window.clearTimeout(timer);
+
+        if (term.length < 2) {
+            closeMenu();
+            return;
+        }
+
+        timer = window.setTimeout(async () => {
+            if (controller) controller.abort();
+            controller = new AbortController();
+
+            try {
+                const response = await fetch('profissionais_busca.php?q=' + encodeURIComponent(term), {
+                    signal: controller.signal
+                });
+                const data = await response.json();
+                render(data.profissionais || []);
+            } catch (error) {
+                if (error.name !== 'AbortError') closeMenu();
+            }
+        }, 180);
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') closeMenu();
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!menu.contains(event.target) && event.target !== input) {
+            closeMenu();
+        }
+    });
+}
+
 function sincronizarPacienteSelecionado() {
     if (!pacienteBusca || !pacienteId) return false;
 
     return pacienteId.value !== '';
+}
+
+function sincronizarProfissionalSelecionado() {
+    if (!profissional) return false;
+    if (!profissionalBusca) return profissional.value !== '';
+
+    return profissional.value !== '';
 }
 
 function calcularValorGuia(preserveEditableValue = false) {
@@ -1633,12 +1941,28 @@ setupPatientAutocomplete(
     }
 );
 
+setupProfessionalAutocomplete(
+    profissionalBusca,
+    document.getElementById('profissionalBuscaMenu'),
+    (professional) => {
+        profissional.value = professional ? professional.id : '';
+        profissional?.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+);
+
 if (novaGuiaForm) {
     novaGuiaForm.addEventListener('submit', function (event) {
         if (!sincronizarPacienteSelecionado()) {
             event.preventDefault();
             alert('Escolha um paciente da lista de autocomplete.');
             pacienteBusca.focus();
+            return;
+        }
+
+        if (!sincronizarProfissionalSelecionado()) {
+            event.preventDefault();
+            alert('Escolha um profissional da lista de autocomplete.');
+            profissionalBusca?.focus();
         }
     });
 }

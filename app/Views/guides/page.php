@@ -16,6 +16,7 @@ $guideBatchOptions = $guideOptions['batches'] ?? [];
 $activeBatchId = (int) ($guideFormValues['lote_id'] ?? 0);
 $activeGuideCode = trim((string) ($selectedGuide['codigo'] ?? $guideFormValues['codigo'] ?? ''));
 $activeGuideTitle = $activeGuideCode !== '' ? $activeGuideCode : ($isEditingGuide ? 'GUIA #' . (int) $guideFormValues['guide_id'] : 'Nova guia');
+$isProfessionalGuideMode = $scopeProfessionalId !== null;
 ?>
 
 <style>
@@ -178,6 +179,10 @@ body {
     border-bottom: 1px solid rgba(18, 73, 88, 0.07);
     color: #1d3945;
     text-decoration: none;
+}
+
+.guide-table.is-clinical .guide-row {
+    grid-template-columns: minmax(220px, 1.4fr) minmax(150px, 0.9fr) minmax(130px, 0.8fr) 70px;
 }
 
 .guide-row:not(.guide-row-head):hover {
@@ -470,6 +475,10 @@ body {
     .guide-row > :nth-child(5) {
         display: none;
     }
+
+    .guide-table.is-clinical .guide-row > :nth-child(4) {
+        display: block;
+    }
 }
 </style>
 
@@ -637,6 +646,9 @@ body {
                         <label class="form-label">Tipo</label>
                         <select name="tipo_guia" id="guideTypeField" class="form-select" required>
                             <?php foreach (app_guide_types() as $value => $label): ?>
+                                <?php if ($isProfessionalGuideMode && $value === 'convenio_lote') {
+                                    continue;
+                                } ?>
                                 <option value="<?= app_h($value) ?>" <?= (string) ($guideFormValues['tipo_guia'] ?? '') === $value ? 'selected' : '' ?>>
                                     <?= app_h($label) ?>
                                 </option>
@@ -659,7 +671,7 @@ body {
                         <input type="text" name="codigo" class="form-control" value="<?= app_h((string) ($guideFormValues['codigo'] ?? '')) ?>" placeholder="Gerado automaticamente">
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="<?= $isProfessionalGuideMode ? 'd-none' : 'col-md-4' ?>">
                         <label class="form-label">Valor</label>
                         <input type="text" name="valor_guia" id="guideValueField" class="form-control" value="<?= app_h((string) ($guideFormValues['valor_guia'] ?? '')) ?>" placeholder="R$ 0,00" readonly>
                         <div id="guideValueHelp" class="small text-danger mt-1 d-none">Cadastre o preco deste servico para este plano no cadastro de servico.</div>
@@ -670,7 +682,7 @@ body {
                         <input type="text" name="convenio" class="form-control" value="<?= app_h((string) ($guideFormValues['convenio'] ?? '')) ?>" placeholder="Operadora / convenio">
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="<?= $isProfessionalGuideMode ? 'd-none' : 'col-md-4' ?>">
                         <label class="form-label">Status operacional</label>
                         <select name="status_operacional" class="form-select" title="Estado operacional da guia. Em uso, ultimas sessoes e finalizada tambem sao recalculados pelos atendimentos.">
                             <?php $selectedOperationalStatus = app_normalize_guide_operational_status((string) ($guideFormValues['status_operacional'] ?? 'aguardando_autorizacao')); ?>
@@ -680,9 +692,12 @@ body {
                                 </option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if ($isProfessionalGuideMode): ?>
+                            <input type="hidden" name="status_operacional" value="aguardando_autorizacao">
+                        <?php endif; ?>
                     </div>
 
-                    <div class="col-md-6">
+                    <div class="<?= $isProfessionalGuideMode ? 'd-none' : 'col-md-6' ?>">
                         <label class="form-label">Numero de lote</label>
                         <select name="lote_id" id="guideBatchField" class="form-select">
                             <option value="">Definir depois no faturamento</option>
@@ -695,22 +710,28 @@ body {
                         <div class="guide-batch-help" id="guideBatchHelp">
                             Disponivel apenas para guias do tipo convenio por lote.
                         </div>
+                        <?php if ($isProfessionalGuideMode): ?>
+                            <input type="hidden" name="lote_id" value="0">
+                        <?php endif; ?>
                     </div>
 
                     <div class="col-md-6 d-flex align-items-end">
                         <div class="guide-form-note">
                             <?= app_h($activeGuideTitle) ?>
-                            <?php if ($isEditingGuide && $selectedGuide): ?>
+                            <?php if (!$isProfessionalGuideMode && $isEditingGuide && $selectedGuide): ?>
                                 <span><?= app_h(guide_billing_label($selectedGuide)) ?></span>
                             <?php endif; ?>
                         </div>
                     </div>
 
-                    <div class="col-md-6 d-flex align-items-end">
+                    <div class="<?= $isProfessionalGuideMode ? 'd-none' : 'col-md-6 d-flex align-items-end' ?>">
                         <div class="form-check pb-2">
                             <input class="form-check-input" type="checkbox" name="autorizada" id="guideAuthorizedField" <?= (int) ($guideFormValues['autorizada'] ?? 0) === 1 ? 'checked' : '' ?> title="Somente guias autorizadas podem gerar atendimento realizado.">
                             <label class="form-check-label" for="guideAuthorizedField">Guia autorizada</label>
                         </div>
+                        <?php if ($isProfessionalGuideMode): ?>
+                            <input type="hidden" name="autorizada" value="0">
+                        <?php endif; ?>
                     </div>
 
                     <div class="col-12">
@@ -720,7 +741,7 @@ body {
 
                     <div class="col-12">
                         <div class="guide-form-footer">
-                            <span class="guide-form-hint">Pacientes, tipo de faturamento e lote ficam prontos sem ocupar espaco da listagem.</span>
+                            <span class="guide-form-hint"><?= $isProfessionalGuideMode ? 'A guia sera salva para autorizacao da secretaria.' : 'Pacientes, tipo de faturamento e lote ficam prontos sem ocupar espaco da listagem.' ?></span>
                             <div class="guide-form-footer-actions">
                                 <?php if ($isEditingGuide && $canDeleteGuides): ?>
                                     <button type="submit" name="action" value="delete_guide" class="btn btn-outline-danger" onclick="return confirm('Excluir esta guia?')">Excluir</button>

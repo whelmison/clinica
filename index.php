@@ -9,12 +9,30 @@ $attendanceGuideFilter = app_is_professional_user()
     : '1 = 1';
 $clinicId = app_active_clinic_id();
 $clinicName = app_current_clinic_name();
+$professionalPatientScope = app_is_professional_user()
+    ? app_professional_scope_exists_for_patient('p.id')
+    : '';
 
 $profileCard = [
     'nome' => $clinicName,
     'registro' => app_is_developer() ? 'Visao completa' : 'Sem vinculo profissional',
     'profissao' => app_is_developer() ? 'Desenvolvedor' : 'Profissional',
+    'foto' => 'assets/Gisele.jpg',
 ];
+
+function dashboard_professional_photo_src(?string $path): string
+{
+    $default = 'assets/Gisele.jpg';
+    $photo = ltrim(str_replace('\\', '/', trim((string) $path)), '/');
+
+    if ($photo === '' || str_contains($photo, '..')) {
+        return $default;
+    }
+
+    $fullPath = __DIR__ . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $photo);
+
+    return is_file($fullPath) ? $photo : $default;
+}
 
 if ($professionalId !== null) {
     $professionalProfile = app_professional_profile($conn, $professionalId);
@@ -24,6 +42,7 @@ if ($professionalId !== null) {
             'nome' => $professionalProfile['nome'],
             'registro' => $professionalProfile['telefone'] ?: 'Telefone nao informado',
             'profissao' => $professionalProfile['profissao'] ?: 'Profissional',
+            'foto' => dashboard_professional_photo_src($professionalProfile['foto'] ?? ''),
         ];
     }
 }
@@ -71,7 +90,7 @@ if ($professionalId !== null) {
 <div class="col-md-4">
 <div class="card p-3 card-profile">
 
-<img src="assets/gisele.jpg" alt="Gisele">
+<img src="<?= app_h($profileCard['foto']) ?>" alt="Foto de <?= app_h($profileCard['nome']) ?>">
 
 <h5><?= app_h($profileCard['nome']) ?></h5>
 <p class="mb-1"><?= app_h($profileCard['registro']) ?></p>
@@ -89,7 +108,7 @@ if ($professionalId !== null) {
 <h6>Pacientes</h6>
 <?php
 $p = app_is_professional_user()
-    ? $conn->query("SELECT COUNT(DISTINCT g.paciente_id) t FROM guias g WHERE g.clinica_id = {$clinicId} AND {$guideFilter}")->fetch_assoc()
+    ? $conn->query("SELECT COUNT(*) t FROM pacientes p WHERE p.clinica_id = {$clinicId} {$professionalPatientScope}")->fetch_assoc()
     : $conn->query("SELECT COUNT(*) t FROM pacientes WHERE clinica_id = {$clinicId}")->fetch_assoc();
 ?>
 <h4><?= $p['t'] ?></h4>
@@ -153,13 +172,7 @@ if (app_is_professional_user()) {
     SELECT DISTINCT p.nome
     FROM pacientes p
     WHERE p.clinica_id = {$clinicId}
-    AND EXISTS (
-        SELECT 1
-        FROM guias gx
-        WHERE gx.paciente_id = p.id
-        AND gx.clinica_id = p.clinica_id
-        AND gx.profissional_id = {$professionalPatientFilter}
-    )
+    {$professionalPatientScope}
     AND NOT EXISTS (
         SELECT 1
         FROM guias g

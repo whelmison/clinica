@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Mockup - Relatorio Financeiro do Profissional</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    width: 1440px;
+    min-height: 1000px;
+    background: #eef4f6;
+    color: #16333f;
+    font-family: Arial, Helvetica, sans-serif;
+}
+.page {
+    padding: 26px;
+}
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 20px;
+    padding: 22px 24px;
+    border-radius: 18px;
+    color: #fff;
+    background: linear-gradient(135deg, #0f4c5c, #1f7a8c);
+}
+.kicker {
+    margin: 0 0 5px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    opacity: .8;
+}
+h1 {
+    margin: 0;
+    font-size: 28px;
+}
+.topbar p {
+    margin: 6px 0 0;
+    color: rgba(255,255,255,.82);
+    font-size: 14px;
+}
+.filters {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.chip, .button {
+    border-radius: 999px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.chip { background: rgba(255,255,255,.16); }
+.button { background: #fff; color: #0f4c5c; }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+.metric {
+    min-height: 116px;
+    padding: 16px;
+    border: 1px solid rgba(18,73,88,.08);
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 10px 24px rgba(24,56,69,.07);
+}
+.metric span {
+    display: block;
+    margin-bottom: 10px;
+    color: #6f8792;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.metric strong {
+    display: block;
+    font-size: 26px;
+    line-height: 1.05;
+}
+.metric small {
+    display: block;
+    margin-top: 8px;
+    color: #6f8792;
+    font-size: 12px;
+}
+.success strong { color: #146c43; }
+.warning strong { color: #98630b; }
+.danger strong { color: #b42318; }
+.panel-row {
+    display: grid;
+    grid-template-columns: 1.05fr .95fr;
+    gap: 14px;
+    margin-top: 16px;
+}
+.panel {
+    border: 1px solid rgba(18,73,88,.08);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 24px rgba(24,56,69,.07);
+    overflow: hidden;
+}
+.panel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    align-items: center;
+    padding: 15px 17px;
+    border-bottom: 1px solid rgba(18,73,88,.08);
+}
+.panel-head h2 {
+    margin: 0;
+    font-size: 18px;
+}
+.panel-head span {
+    color: #6f8792;
+    font-size: 12px;
+    font-weight: 700;
+}
+.analysis {
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px 16px;
+}
+.analysis-item {
+    padding: 13px;
+    border-left: 4px solid #1f7a8c;
+    border-radius: 10px;
+    background: #f6fafb;
+}
+.analysis-item.warning { border-left-color: #f5a623; }
+.analysis-item.success { border-left-color: #1f9d6d; }
+.analysis-item.danger { border-left-color: #dc3545; }
+.analysis-item strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+.analysis-item p {
+    margin: 0;
+    color: #526973;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.bars {
+    padding: 18px;
+}
+.bar-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 90px;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    font-size: 13px;
+}
+.track {
+    height: 14px;
+    border-radius: 999px;
+    background: #edf2f4;
+    overflow: hidden;
+}
+.fill {
+    height: 100%;
+    border-radius: 999px;
+    background: #1f7a8c;
+}
+.fill.green { background: #1f9d6d; }
+.fill.yellow { background: #f5a623; }
+.fill.red { background: #dc3545; }
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+th, td {
+    padding: 11px 12px;
+    border-bottom: 1px solid #e4edf0;
+    text-align: left;
+    white-space: nowrap;
+}
+th {
+    color: #6f8792;
+    background: #f6fafb;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.right { text-align: right; }
+.status {
+    display: inline-block;
+    min-width: 78px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    text-align: center;
+}
+.paid { background: #d9f2e3; color: #146c43; }
+.partial { background: #fff4cc; color: #98630b; }
+.open { background: #edf2f4; color: #526973; }
+.footer-note {
+    margin-top: 12px;
+    color: #6f8792;
+    font-size: 12px;
+}
+</style>
+</head>
+<body>
+<div class="page">
+    <section class="topbar">
+        <div>
+            <p class="kicker">Relatorio financeiro</p>
+            <h1>Profissional - Maio/2026</h1>
+            <p>Resumo do valor a receber, guias pagas, pendentes e recebimentos parciais.</p>
+        </div>
+        <div class="filters">
+            <div class="chip">Dra. Mariana Alves</div>
+            <div class="chip">01/05/2026 a 31/05/2026</div>
+            <div class="button">Exportar PDF/JPG</div>
+        </div>
+    </section>
+
+    <section class="grid">
+        <div class="metric success">
+            <span>Liquido a receber</span>
+            <strong>R$ 4.826,40</strong>
+            <small>Comissao + fixo - descontos</small>
+        </div>
+        <div class="metric">
+            <span>Produzido no mes</span>
+            <strong>R$ 12.480,00</strong>
+            <small>Valor das guias do profissional</small>
+        </div>
+        <div class="metric warning">
+            <span>Guias a pagar</span>
+            <strong>18</strong>
+            <small>R$ 6.940,00 em aberto</small>
+        </div>
+        <div class="metric success">
+            <span>Guias pagas</span>
+            <strong>24</strong>
+            <small>R$ 5.120,00 recebido</small>
+        </div>
+        <div class="metric danger">
+            <span>Parciais / glosas</span>
+            <strong>7</strong>
+            <small>R$ 420,00 glosado</small>
+        </div>
+    </section>
+
+    <section class="panel-row">
+        <div class="panel">
+            <div class="panel-head">
+                <h2>Relatorio sintetico</h2>
+                <span>visao rapida para o profissional</span>
+            </div>
+            <div class="bars">
+                <div class="bar-row"><span>Pagas</span><div class="track"><div class="fill green" style="width:49%"></div></div><strong>24 guias</strong></div>
+                <div class="bar-row"><span>A pagar</span><div class="track"><div class="fill yellow" style="width:37%"></div></div><strong>18 guias</strong></div>
+                <div class="bar-row"><span>Parciais</span><div class="track"><div class="fill" style="width:14%"></div></div><strong>7 guias</strong></div>
+                <div class="bar-row"><span>Glosadas</span><div class="track"><div class="fill red" style="width:6%"></div></div><strong>3 guias</strong></div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">
+                <h2>Analise do mes</h2>
+                <span>explicacao do resultado</span>
+            </div>
+            <div class="analysis">
+                <div class="analysis-item success">
+                    <strong>Recebimento saudavel</strong>
+                    <p>24 guias foram pagas no periodo, representando 41% do valor produzido.</p>
+                </div>
+                <div class="analysis-item warning">
+                    <strong>Acompanhar pendencias</strong>
+                    <p>18 guias ainda estao em aberto. Prioridade: guias autorizadas e ja finalizadas.</p>
+                </div>
+                <div class="analysis-item">
+                    <strong>Parciais exigem conferencia</strong>
+                    <p>7 guias tiveram pagamento parcial; mostrar saldo por paciente ajuda a cobrar sem abrir outro relatorio.</p>
+                </div>
+                <div class="analysis-item danger">
+                    <strong>Impacto de glosa</strong>
+                    <p>R$ 420,00 reduzem o valor faturavel. Exibir motivo/status do atendimento evita surpresa no fechamento.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+        <div class="panel-head">
+            <h2>Guias do periodo</h2>
+            <span>detalhamento para conferencia</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Guia</th>
+                    <th>Paciente</th>
+                    <th>Plano</th>
+                    <th>Status</th>
+                    <th class="right">Valor</th>
+                    <th class="right">Recebido</th>
+                    <th class="right">Saldo</th>
+                    <th class="right">Repasse</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>GUIA-1041</td><td>Ana Paula</td><td>Unimed</td><td><span class="status paid">Paga</span></td><td class="right">R$ 480,00</td><td class="right">R$ 480,00</td><td class="right">R$ 0,00</td><td class="right">R$ 192,00</td></tr>
+                <tr><td>GUIA-1048</td><td>Carlos Lima</td><td>Particular</td><td><span class="status partial">Parcial</span></td><td class="right">R$ 720,00</td><td class="right">R$ 360,00</td><td class="right">R$ 360,00</td><td class="right">R$ 144,00</td></tr>
+                <tr><td>GUIA-1052</td><td>Beatriz Rocha</td><td>Bradesco</td><td><span class="status open">Aberta</span></td><td class="right">R$ 600,00</td><td class="right">R$ 0,00</td><td class="right">R$ 600,00</td><td class="right">R$ 0,00</td></tr>
+                <tr><td>GUIA-1059</td><td>Rafael Sousa</td><td>Unimed</td><td><span class="status partial">Parcial</span></td><td class="right">R$ 960,00</td><td class="right">R$ 700,00</td><td class="right">R$ 260,00</td><td class="right">R$ 280,00</td></tr>
+                <tr><td>GUIA-1063</td><td>Lucia Martins</td><td>Cassi</td><td><span class="status paid">Paga</span></td><td class="right">R$ 540,00</td><td class="right">R$ 540,00</td><td class="right">R$ 0,00</td><td class="right">R$ 216,00</td></tr>
+            </tbody>
+        </table>
+    </section>
+    <div class="footer-note">Regra sugerida do repasse: percentual de comissao cadastrado no profissional aplicado sobre o valor recebido/faturavel. Pode ser ajustado se a clinica pagar por guia emitida em vez de guia recebida.</div>
+</div>
+</body>
+</html>

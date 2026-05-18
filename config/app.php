@@ -181,21 +181,22 @@ function app_page_access_map(): array
         'index.php' => ['profissional', 'desenvolvedor'],
         'meu_cadastro.php' => ['profissional', 'desenvolvedor'],
         'atendimentos.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'novo_atendimento.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'editar_atendimento.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'excluir_atendimento.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'toggle_glosa.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'novo_atendimento.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'editar_atendimento.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'excluir_atendimento.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'toggle_glosa.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'buscar_guias.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'guia_modal_dados.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'pacientes_busca.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'paciente_historico.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'paciente_fichas.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'paciente_fichas.php' => ['profissional'],
         'guias.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
-        'financeiro.php' => ['profissional', 'desenvolvedor'],
-        'financeiro_mensal.php' => ['profissional', 'desenvolvedor'],
-        'financeiro_mensal_dados.php' => ['profissional', 'desenvolvedor'],
-        'financeiro_mensal_api.php' => ['profissional', 'desenvolvedor'],
-        'recebimentos.php' => ['profissional', 'desenvolvedor'],
+        'financeiro.php' => ['desenvolvedor'],
+        'financeiro_profissional.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'financeiro_mensal.php' => ['desenvolvedor'],
+        'financeiro_mensal_dados.php' => ['desenvolvedor'],
+        'financeiro_mensal_api.php' => ['desenvolvedor'],
+        'recebimentos.php' => ['desenvolvedor'],
         'administrativo.php' => ['administrativo', 'desenvolvedor'],
         'administrativo_profissionais.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'administrativo_clinica.php' => ['administrativo', 'desenvolvedor'],
@@ -218,7 +219,7 @@ function app_page_access_map(): array
         'relatorio_financeiro_fechamento.php' => ['administrativo', 'desenvolvedor'],
         'administrativo_lotes.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'secretaria.php' => ['secretaria', 'desenvolvedor'],
-        'secretaria_agenda.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'secretaria_agenda.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'secretaria_agenda_grupo.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'agenda_liberacao.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'agenda_lista_agendamentos.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
@@ -236,9 +237,9 @@ function app_page_access_map(): array
         'editar_guia.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'excluir_guia.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'baixar_guia.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
-        'pacientes.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
-        'novo_paciente.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
-        'editar_paciente.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
+        'pacientes.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'novo_paciente.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
+        'editar_paciente.php' => ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'],
         'excluir_paciente.php' => ['secretaria', 'administrativo', 'desenvolvedor'],
         'planos.php' => ['administrativo', 'desenvolvedor'],
         'editar_plano.php' => ['administrativo', 'desenvolvedor'],
@@ -258,7 +259,7 @@ function app_profile_matches_access(array $roles): bool
 function app_forced_profile_access_pages(): array
 {
     return [
-        'profissional' => ['index.php'],
+        'profissional' => ['index.php', 'meu_cadastro.php', 'secretaria_agenda.php', 'agenda_liberacao.php', 'atendimentos.php', 'pacientes.php', 'novo_paciente.php', 'editar_paciente.php', 'pacientes_busca.php', 'paciente_historico.php', 'paciente_fichas.php', 'guias.php', 'financeiro_profissional.php', 'gestao_guias.php', 'nova_guia_gestao.php', 'editar_guia_gestao.php'],
         'secretaria' => ['secretaria.php'],
         'administrativo' => ['administrativo.php', 'administrativo_clinica.php', 'administrativo_permissoes.php'],
         'desenvolvedor' => ['desenvolvedor.php', 'administrativo_clinica.php', 'administrativo_permissoes.php'],
@@ -340,6 +341,33 @@ function app_effective_page_access_map(mysqli $conn): array
         $page = (string) ($row['pagina'] ?? '');
 
         if ($profile === '' || !isset($map[$page])) {
+            continue;
+        }
+
+        if ($page === 'paciente_fichas.php' && $profile !== 'profissional') {
+            continue;
+        }
+
+        if ($profile === 'profissional' && in_array($page, [
+            'excluir_paciente.php',
+            'excluir_guia.php',
+            'baixar_guia.php',
+            'financeiro.php',
+            'financeiro_mensal.php',
+            'financeiro_mensal_dados.php',
+            'financeiro_mensal_api.php',
+            'recebimentos.php',
+            'administrativo_lotes.php',
+            'financeiro_contas_receber.php',
+            'financeiro_contas_pagar.php',
+            'toggle_glosa.php',
+            'novo_atendimento.php',
+            'editar_atendimento.php',
+            'excluir_atendimento.php',
+            'agenda_lista_agendamentos.php',
+            'agenda_relatorio_gerencial.php',
+            'secretaria_agenda_grupo.php',
+        ], true)) {
             continue;
         }
 
@@ -510,6 +538,7 @@ function app_ensure_clinics_table(mysqli $conn): void
         endereco VARCHAR(255) NULL,
         cidade VARCHAR(120) NULL,
         estado VARCHAR(2) NULL,
+        logotipo VARCHAR(255) NULL,
         ativo TINYINT(1) NOT NULL DEFAULT 1,
         liberada TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -519,6 +548,7 @@ function app_ensure_clinics_table(mysqli $conn): void
 
     app_ensure_column($conn, 'clinicas', 'cnpj', 'VARCHAR(20) NULL');
     app_ensure_column($conn, 'clinicas', 'cnpj_digits', 'VARCHAR(14) NULL');
+    app_ensure_column($conn, 'clinicas', 'logotipo', 'VARCHAR(255) NULL');
     app_ensure_column($conn, 'clinicas', 'liberada', 'TINYINT(1) NOT NULL DEFAULT 1');
     app_normalize_clinic_cnpjs($conn);
     app_drop_index_if_exists($conn, 'clinicas', 'idx_clinicas_cnpj');
@@ -554,6 +584,7 @@ function app_ensure_multiclinic_schema(mysqli $conn, ?int $defaultClinicId = nul
     $tables = [
         'usuarios',
         'pacientes',
+        'paciente_profissionais',
         'profissionais',
         'servicos',
         'profissional_servico',
@@ -823,6 +854,7 @@ function app_install_schema(mysqli $conn): void
         endereco VARCHAR(255) NULL,
         telefone VARCHAR(30) NULL,
         profissao VARCHAR(120) NULL,
+        foto VARCHAR(255) NULL,
         permite_editar_guias TINYINT(1) NOT NULL DEFAULT 0,
         permite_secretaria_liberar_agenda TINYINT(1) NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -856,6 +888,18 @@ function app_install_schema(mysqli $conn): void
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
+    $conn->query('CREATE TABLE IF NOT EXISTS paciente_profissionais (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        clinica_id INT NOT NULL DEFAULT 1,
+        paciente_id INT NOT NULL,
+        profissional_id INT NOT NULL,
+        origem VARCHAR(40) NOT NULL DEFAULT \'manual\',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_paciente_profissional (clinica_id, paciente_id, profissional_id),
+        INDEX idx_paciente_profissionais_profissional (clinica_id, profissional_id),
+        INDEX idx_paciente_profissionais_paciente (clinica_id, paciente_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
     $conn->query('CREATE TABLE IF NOT EXISTS servico_precos (
         id INT AUTO_INCREMENT PRIMARY KEY,
         clinica_id INT NOT NULL DEFAULT 1,
@@ -871,9 +915,14 @@ function app_install_schema(mysqli $conn): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
     $conn->query('CREATE TABLE IF NOT EXISTS profissional_servico (
+        clinica_id INT NOT NULL DEFAULT 1,
         profissional_id INT NOT NULL,
         servico_id INT NOT NULL,
         tempo_minutos INT NULL,
+        cobranca_tipo VARCHAR(20) NOT NULL DEFAULT \'percentual\',
+        cobranca_valor DECIMAL(10,2) NOT NULL DEFAULT 0,
+        cobra_imposto TINYINT(1) NOT NULL DEFAULT 0,
+        imposto_percentual DECIMAL(5,2) NOT NULL DEFAULT 0,
         PRIMARY KEY (profissional_id, servico_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 
@@ -1093,7 +1142,10 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'pacientes', 'prontuario', 'VARCHAR(120) NULL');
     app_ensure_column($conn, 'pacientes', 'dia_preferencia', 'VARCHAR(50) NULL');
     app_ensure_column($conn, 'pacientes', 'horario_preferencia', 'VARCHAR(20) NULL');
-
+    app_ensure_column($conn, 'paciente_profissionais', 'clinica_id', 'INT NOT NULL DEFAULT 1');
+    app_ensure_column($conn, 'paciente_profissionais', 'paciente_id', 'INT NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'paciente_profissionais', 'profissional_id', 'INT NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'paciente_profissionais', 'origem', 'VARCHAR(40) NOT NULL DEFAULT \'manual\'');
     app_ensure_column($conn, 'planos', 'valor_sessao', 'DECIMAL(10,2) DEFAULT 0');
     app_ensure_column($conn, 'usuarios', 'usuario_padrao', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_index($conn, 'usuarios', 'idx_usuarios_padrao', 'CREATE INDEX idx_usuarios_padrao ON usuarios (usuario_padrao)');
@@ -1104,6 +1156,7 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'profissionais', 'imposto_fixo', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'imposto_percentual', 'DECIMAL(5,2) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'profissionais', 'mensagem_padrao_whatsapp', 'TEXT NULL');
+    app_ensure_column($conn, 'profissionais', 'foto', 'VARCHAR(255) NULL');
     app_ensure_column($conn, 'servicos', 'tipo_agendamento', 'VARCHAR(20) NOT NULL DEFAULT \'individual\'');
     app_ensure_column($conn, 'servicos', 'capacidade_agendamento', 'INT NOT NULL DEFAULT 1');
     app_ensure_column($conn, 'servico_precos', 'clinica_id', 'INT NOT NULL DEFAULT 1');
@@ -1115,6 +1168,22 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'servico_precos', 'permite_alterar_guia', 'TINYINT(1) NOT NULL DEFAULT 0');
     app_ensure_column($conn, 'servico_precos', 'observacoes', 'TEXT NULL');
     app_ensure_column($conn, 'servico_precos', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+    app_ensure_column($conn, 'profissional_servico', 'clinica_id', 'INT NOT NULL DEFAULT 1');
+    app_ensure_column($conn, 'profissional_servico', 'profissional_id', 'INT NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'profissional_servico', 'servico_id', 'INT NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'profissional_servico', 'tempo_minutos', 'INT NULL');
+    app_ensure_column($conn, 'profissional_servico', 'cobranca_tipo', 'VARCHAR(20) NOT NULL DEFAULT \'percentual\'');
+    app_ensure_column($conn, 'profissional_servico', 'cobranca_valor', 'DECIMAL(10,2) NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'profissional_servico', 'cobra_imposto', 'TINYINT(1) NOT NULL DEFAULT 0');
+    app_ensure_column($conn, 'profissional_servico', 'imposto_percentual', 'DECIMAL(5,2) NOT NULL DEFAULT 0');
+    $conn->query("UPDATE profissional_servico ps
+        INNER JOIN profissionais p ON p.id = ps.profissional_id AND p.clinica_id = ps.clinica_id
+        SET ps.cobranca_tipo = 'percentual',
+            ps.cobranca_valor = p.comissao_percentual,
+            ps.cobra_imposto = CASE WHEN p.imposto_percentual > 0 OR p.imposto_fixo > 0 THEN 1 ELSE ps.cobra_imposto END,
+            ps.imposto_percentual = p.imposto_percentual
+        WHERE (ps.cobranca_valor IS NULL OR ps.cobranca_valor = 0)
+          AND p.comissao_percentual > 0");
 
     $hadGuideAuthorizationColumn = app_column_exists($conn, 'guias', 'autorizada');
     $hadGuideOperationalStatusColumn = app_column_exists($conn, 'guias', 'status_operacional');
@@ -1200,6 +1269,22 @@ function app_install_schema(mysqli $conn): void
     app_ensure_column($conn, 'contas_receber', 'observacoes', 'TEXT NULL');
 
     $defaultClinicId = app_ensure_multiclinic_schema($conn, $defaultClinicId);
+    $conn->query("INSERT IGNORE INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+        SELECT DISTINCT clinica_id, paciente_id, profissional_id, 'guia'
+        FROM guias
+        WHERE paciente_id > 0 AND profissional_id > 0");
+    $conn->query("INSERT IGNORE INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+        SELECT DISTINCT clinica_id, cliente_id, profissional_id, 'agenda'
+        FROM agenda
+        WHERE cliente_id > 0 AND profissional_id > 0");
+    $conn->query("INSERT IGNORE INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+        SELECT DISTINCT clinica_id, paciente_id, profissional_id, 'ficha'
+        FROM paciente_fichas_avaliacao
+        WHERE paciente_id > 0 AND profissional_id > 0");
+    $conn->query("INSERT IGNORE INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+        SELECT DISTINCT clinica_id, paciente_id, profissional_id, 'evolucao'
+        FROM paciente_fichas_evolucao
+        WHERE paciente_id > 0 AND profissional_id > 0");
     app_ensure_profile_permissions_schema($conn);
     app_ensure_patient_sheet_detail_schema($conn);
 
@@ -1219,6 +1304,11 @@ function app_install_schema(mysqli $conn): void
     app_ensure_index($conn, 'agenda_grupo_pacientes', 'idx_agenda_grupo_pacientes_atendimento', 'CREATE INDEX idx_agenda_grupo_pacientes_atendimento ON agenda_grupo_pacientes (atendimento_id)');
     app_ensure_index($conn, 'servico_precos', 'idx_servico_precos_servico', 'CREATE INDEX idx_servico_precos_servico ON servico_precos (clinica_id, servico_id)');
     app_ensure_index($conn, 'servico_precos', 'idx_servico_precos_plano', 'CREATE INDEX idx_servico_precos_plano ON servico_precos (clinica_id, plano_id)');
+    app_ensure_index($conn, 'profissional_servico', 'idx_profissional_servico_clinica_profissional', 'CREATE INDEX idx_profissional_servico_clinica_profissional ON profissional_servico (clinica_id, profissional_id)');
+    app_ensure_index($conn, 'profissional_servico', 'idx_profissional_servico_clinica_servico', 'CREATE INDEX idx_profissional_servico_clinica_servico ON profissional_servico (clinica_id, servico_id)');
+    app_ensure_index($conn, 'paciente_profissionais', 'uq_paciente_profissional', 'CREATE UNIQUE INDEX uq_paciente_profissional ON paciente_profissionais (clinica_id, paciente_id, profissional_id)');
+    app_ensure_index($conn, 'paciente_profissionais', 'idx_paciente_profissionais_profissional', 'CREATE INDEX idx_paciente_profissionais_profissional ON paciente_profissionais (clinica_id, profissional_id)');
+    app_ensure_index($conn, 'paciente_profissionais', 'idx_paciente_profissionais_paciente', 'CREATE INDEX idx_paciente_profissionais_paciente ON paciente_profissionais (clinica_id, paciente_id)');
     app_ensure_index($conn, 'paciente_fichas_avaliacao', 'idx_fichas_avaliacao_paciente', 'CREATE INDEX idx_fichas_avaliacao_paciente ON paciente_fichas_avaliacao (clinica_id, paciente_id, data_avaliacao)');
     app_ensure_index($conn, 'paciente_fichas_evolucao', 'idx_fichas_evolucao_paciente', 'CREATE INDEX idx_fichas_evolucao_paciente ON paciente_fichas_evolucao (clinica_id, paciente_id, data_evolucao)');
     app_ensure_index($conn, 'plano_contas', 'idx_plano_contas_tipo_nome', 'CREATE INDEX idx_plano_contas_tipo_nome ON plano_contas (tipo, nome)');

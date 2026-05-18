@@ -39,8 +39,19 @@ $patients = [];
 $allowedProfessionalIds = array_map(static fn (array $professional): int => (int) $professional['id'], $professionals);
 $professionalChosenInRequest = trim((string) app_request_query('professional_id', '')) !== '';
 $selectedProfessionalId = app_query_int('professional_id') ?: (int) ($allowedProfessionalIds[0] ?? 0);
+$professionalScopeId = app_is_professional_user() ? (app_current_professional_id() ?? 0) : null;
 $reportReferenceDate = app_request_query('report_date', date('Y-m-d')) ?? date('Y-m-d');
 $reportReferenceDate = strtotime($reportReferenceDate) ? date('Y-m-d', strtotime($reportReferenceDate)) : date('Y-m-d');
+
+if ($professionalScopeId !== null) {
+    $professionals = array_values(array_filter(
+        $professionals,
+        static fn (array $professional): bool => (int) ($professional['id'] ?? 0) === $professionalScopeId
+    ));
+    $allowedProfessionalIds = $professionalScopeId > 0 ? [$professionalScopeId] : [];
+    $selectedProfessionalId = $professionalScopeId;
+    $professionalChosenInRequest = true;
+}
 
 if ($selectedProfessionalId > 0 && !in_array($selectedProfessionalId, $allowedProfessionalIds, true)) {
     $selectedProfessionalId = (int) ($allowedProfessionalIds[0] ?? 0);
@@ -62,6 +73,15 @@ $whatsappUrl = $_SESSION['app_whatsapp_url'] ?? null;
 unset($_SESSION['app_whatsapp_url']);
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (app_is_professional_user()) {
+        app_flash('warning', 'A agenda do profissional esta disponivel somente para consulta.');
+        app_redirect('secretaria_agenda.php?' . app_build_query([
+            'professional_id' => $selectedProfessionalId,
+            'week_start' => $weekStart,
+            'report_date' => $reportReferenceDate,
+        ]));
+    }
+
     $action = app_request_post('action', '') ?? '';
     $skipWhatsapp = app_request_post('skip_whatsapp', '0') === '1';
     $result = ['ok' => false, 'message' => 'Acao invalida.'];
@@ -113,7 +133,11 @@ $appointmentFilters = [
     'status' => app_request_query('status', '') ?? '',
 ];
 
-$appointmentPageData = $scheduleRepository->paginateAppointments($appointmentFilters, max(1, app_query_int('appointment_page', 1)), 8);
+if ($professionalScopeId !== null) {
+    $appointmentFilters['profissional_id'] = $professionalScopeId > 0 ? $professionalScopeId : 0;
+}
+
+$appointmentPageData = $scheduleRepository->paginateAppointments($appointmentFilters, max(1, app_query_int('appointment_page', 1)), 8, $professionalScopeId);
 $appointments = $appointmentPageData['items'];
 $appointmentPagination = $appointmentPageData['pagination'];
 $appointmentPagination['query'] = array_merge($appointmentPagination['query'], [
@@ -121,18 +145,30 @@ $appointmentPagination['query'] = array_merge($appointmentPagination['query'], [
     'professional_id' => $selectedProfessionalId,
 ]);
 $selectedAppointment = $selectedAppointmentId ? $scheduleRepository->findAppointment($selectedAppointmentId) : null;
+
+if ($professionalScopeId !== null && $selectedAppointment && (int) ($selectedAppointment['profissional_id'] ?? 0) !== $professionalScopeId) {
+    $selectedAppointment = null;
+    $selectedAppointmentId = null;
+}
+
 $appointmentFormDateValue = (string) ($selectedAppointment['data_agendamento'] ?? $weekStart);
 $appointmentFormTimeValue = app_time_br((string) ($selectedAppointment['hora_inicio'] ?? '08:00:00'));
 $selectedAvailability = null;
 $selectedProfessionalServices = $selectedProfessionalId > 0 ? $scheduleRepository->servicesForProfessional($selectedProfessionalId) : [];
 $selectedCalendarServiceId = app_query_int('service_id');
+$selectedProfessionalServiceIds = array_map(static fn (array $service): int => (int) ($service['id'] ?? 0), $selectedProfessionalServices);
 
-if ($professionalChosenInRequest && $selectedCalendarServiceId <= 0 && count($selectedProfessionalServices) === 1) {
+if ($selectedCalendarServiceId > 0 && !in_array($selectedCalendarServiceId, $selectedProfessionalServiceIds, true)) {
+    $selectedCalendarServiceId = 0;
+}
+
+if ($selectedCalendarServiceId <= 0 && count($selectedProfessionalServices) === 1) {
     $selectedCalendarServiceId = (int) ($selectedProfessionalServices[0]['id'] ?? 0);
 }
 
 foreach ($selectedProfessionalServices as $calendarService) {
-    if ($professionalChosenInRequest
+    if (!app_is_professional_user()
+        && $professionalChosenInRequest
         && $selectedCalendarServiceId > 0
         && (int) $calendarService['id'] === $selectedCalendarServiceId
         && ($calendarService['tipo_agendamento'] ?? 'individual') === 'grupo') {
@@ -153,7 +189,16 @@ $calendarGroupServices = array_values(array_filter(
     $selectedProfessionalServices,
     static fn (array $service): bool => ($service['tipo_agendamento'] ?? 'individual') === 'grupo'
 ));
-$showCalendarServiceSelect = (count($calendarGroupServices) + ($calendarIndividualServices !== [] ? 1 : 0)) > 1;
+$showCalendarServiceSelect = count($selectedProfessionalServices) > 1;
+$calendarFilterRequiresService = $showCalendarServiceSelect;
+$calendarFilterNeedsService = !app_is_professional_user()
+    && $professionalChosenInRequest
+    && $calendarFilterRequiresService
+    && $selectedCalendarServiceId <= 0
+    && $selectedAppointment === null;
+$calendarFilterMessage = $calendarFilterNeedsService
+    ? 'Este profissional possui mais de um servico. Escolha o servico para continuar.'
+    : '';
 $weekDays = app_week_days($weekStart);
 $calendarData = $selectedProfessionalId > 0 ? $scheduleRepository->calendar($weekStart, $selectedProfessionalId) : ['availabilities' => [], 'appointments' => []];
 $calendarNavigationQuery = ['report_date' => $reportReferenceDate];
@@ -180,12 +225,16 @@ $calendarDisplayEnd = '18:00:00';
 $calendarPixelsPerMinute = $calendarSlotMinutes >= 60 ? 0.52 : 0.9;
 $calendarHtml = render_week_calendar($weekDays, $calendarData, $selectedAppointmentId, $canManageAppointments, $canManageAvailability, $weekStart, $selectedAvailabilityId, $selectedProfessionalId, $calendarNavigationQuery, $calendarDisplayStart, $calendarDisplayEnd, $calendarPixelsPerMinute, $calendarSlotMinutes);
 
-$pageTitle = 'Agenda Clinica';
+$pageTitle = app_is_professional_user() ? 'Minha Agenda' : 'Agenda Clinica';
 $operationTitle = 'Operacao de agenda';
-$operationDescription = 'Cadastro rapido de agendamentos da secretaria.';
-$calendarTitle = 'Grade semanal';
+$operationDescription = app_is_professional_user()
+    ? 'Consulta da agenda do profissional.'
+    : 'Cadastro rapido de agendamentos da secretaria.';
+$calendarTitle = app_is_professional_user() ? 'Minha agenda' : 'Grade semanal';
 $calendarTitleProfessional = (string) ($currentProfessional['nome'] ?? '');
-$calendarDescription = 'Passe o mouse para ver o horario. Duplo clique abre um popup para cadastrar ou editar o agendamento.';
+$calendarDescription = app_is_professional_user()
+    ? 'Consulta dos horarios e pacientes da sua agenda.'
+    : 'Passe o mouse para ver o horario. Duplo clique abre um popup para cadastrar ou editar o agendamento.';
 $calendarResetPath = 'secretaria_agenda.php?' . app_build_query([
     'professional_id' => $selectedProfessionalId,
     'report_date' => $reportReferenceDate,
@@ -193,12 +242,13 @@ $calendarResetPath = 'secretaria_agenda.php?' . app_build_query([
 $autoSubmitProfessionalSelect = false;
 $calendarOnlyLayout = true;
 $showTopCalendarFilters = false;
-$showCalendarFilterModal = true;
+$showCalendarFilterModal = !app_is_professional_user();
 $showOperationPanel = false;
 $appointmentModalHighlightSubtitle = true;
 $appointmentUnavailableMessage = 'Este horario ainda nao foi liberado para agendamento.';
 $autoOpenSelectedAppointmentModal = $selectedAppointment !== null;
 $floatingFlashMessages = true;
-$autoOpenCalendarFilterModal = !$professionalChosenInRequest && $selectedAppointment === null && count($professionals) > 1;
+$autoOpenCalendarFilterModal = $calendarFilterNeedsService
+    || (!app_is_professional_user() && !$professionalChosenInRequest && $selectedAppointment === null && count($professionals) > 1);
 
 include __DIR__ . '/app/Views/schedule/page.php';

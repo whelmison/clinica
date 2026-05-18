@@ -22,10 +22,17 @@ final class GuideService
         }
 
         try {
-            $data = $this->normalizeData($input);
+            $professionalMode = $this->isProfessionalEditor($user);
+            $forcedProfessionalId = $professionalMode ? (int) $user['profissional_id'] : null;
+            $data = $this->normalizeData($input, null, $forcedProfessionalId, $professionalMode);
             $this->pdo->beginTransaction();
             $guideId = $this->repository->create($data);
-            $this->syncReceivable($guideId, $data['tipo_guia']);
+            $this->repository->linkPatientProfessional($data['paciente_id'], $data['profissional_id'], 'guia');
+
+            if (!$professionalMode) {
+                $this->syncReceivable($guideId, $data['tipo_guia']);
+            }
+
             $this->pdo->commit();
 
             return ['ok' => true, 'message' => 'Guia criada com sucesso.', 'id' => $guideId];
@@ -57,11 +64,17 @@ final class GuideService
         }
 
         try {
-            $forcedProfessionalId = $this->isProfessionalEditor($user) ? (int) $guide['profissional_id'] : null;
-            $data = $this->normalizeData($input, $guideId, $forcedProfessionalId);
+            $professionalMode = $this->isProfessionalEditor($user);
+            $forcedProfessionalId = $professionalMode ? (int) $guide['profissional_id'] : null;
+            $data = $this->normalizeData($input, $guideId, $forcedProfessionalId, $professionalMode);
             $this->pdo->beginTransaction();
             $this->repository->update($guideId, $data);
-            $this->syncReceivable($guideId, $data['tipo_guia']);
+            $this->repository->linkPatientProfessional($data['paciente_id'], $data['profissional_id'], 'guia');
+
+            if (!$professionalMode) {
+                $this->syncReceivable($guideId, $data['tipo_guia']);
+            }
+
             $this->pdo->commit();
 
             return ['ok' => true, 'message' => 'Guia atualizada com sucesso.', 'id' => $guideId];
@@ -119,6 +132,11 @@ final class GuideService
     public function canCreate(array $user): bool
     {
         $profile = $user['perfil'] ?? '';
+
+        if ($profile === 'profissional') {
+            return (int) ($user['profissional_id'] ?? 0) > 0;
+        }
+
         return in_array($profile, ['profissional', 'secretaria', 'administrativo', 'desenvolvedor'], true);
     }
 
@@ -126,16 +144,7 @@ final class GuideService
     {
         $profile = $user['perfil'] ?? '';
 
-        if (in_array($profile, ['secretaria', 'administrativo', 'desenvolvedor'], true)) {
-            return true;
-        }
-
-        if ($profile === 'profissional') {
-            $professionalId = (int) ($user['profissional_id'] ?? 0);
-            return $professionalId > 0 && $this->repository->professionalCanEditGuides($professionalId);
-        }
-
-        return false;
+        return in_array($profile, ['secretaria', 'administrativo', 'desenvolvedor'], true);
     }
 
     public function canEdit(array $user, ?array $guide = null): bool
@@ -153,6 +162,12 @@ final class GuideService
         $professionalId = (int) ($user['profissional_id'] ?? 0);
 
         if ($professionalId <= 0 || (int) $guide['profissional_id'] !== $professionalId) {
+            return false;
+        }
+
+        $status = app_guide_operational_status_data($guide)['value'];
+
+        if ($status !== 'aguardando_autorizacao' || (int) ($guide['autorizada'] ?? 0) === 1) {
             return false;
         }
 
@@ -175,7 +190,7 @@ final class GuideService
         return ($user['perfil'] ?? '') === 'profissional' && (int) ($user['profissional_id'] ?? 0) > 0;
     }
 
-    private function normalizeData(array $input, ?int $ignoreId = null, ?int $forcedProfessionalId = null): array
+    private function normalizeData(array $input, ?int $ignoreId = null, ?int $forcedProfessionalId = null, bool $professionalMode = false): array
     {
         $patientId = (int) ($input['paciente_id'] ?? 0);
         $professionalId = $forcedProfessionalId ?? (int) ($input['profissional_id'] ?? 0);
@@ -212,8 +227,19 @@ final class GuideService
             throw new InvalidArgumentException('Selecione um tipo de guia valido.');
         }
 
+        if ($professionalMode && $type === 'convenio_lote') {
+            throw new InvalidArgumentException('Profissional pode lancar guia propria, mas guia por lote deve ser feita pela secretaria.');
+        }
+
         if ($type !== 'convenio_lote') {
             $batchId = null;
+        }
+
+        if ($professionalMode) {
+            $batchId = null;
+            $authorized = 0;
+            $operationalStatus = 'aguardando_autorizacao';
+            $value = 0.0;
         }
 
         if ($code === '') {
@@ -232,7 +258,7 @@ final class GuideService
         }
 
         $calculatedValue = $servicePrice * $totalSessions;
-        $value = !empty($servicePriceData['permite_alterar_guia']) && $value > 0 ? $value : $calculatedValue;
+        $value = !$professionalMode && !empty($servicePriceData['permite_alterar_guia']) && $value > 0 ? $value : $calculatedValue;
 
         if ($value <= 0) {
             throw new InvalidArgumentException('Informe um valor valido para a guia.');

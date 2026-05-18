@@ -82,4 +82,23 @@ foreach ($priceReportRows as $row) {
     }
 }
 
+$clinicLogoColumn = app_column_exists($conn, 'clinicas', 'logotipo') ? 'logotipo' : 'NULL AS logotipo';
+$priceReportClinic = app_stmt_one(
+    $conn,
+    'SELECT nome_fantasia, razao_social, cnpj, telefone, whatsapp, email, endereco, cidade, estado, ' . $clinicLogoColumn . '
+     FROM clinicas
+     WHERE id = ?
+     LIMIT 1',
+    'i',
+    [app_active_clinic_id()]
+) ?? [];
+$priceReportIssuedAt = (new DateTimeImmutable('now', new DateTimeZone('America/Araguaina')))->format('d/m/Y H:i');
+$priceReportFilterText = trim((string) $filters['busca_servico']) !== ''
+    ? 'Busca: ' . trim((string) $filters['busca_servico'])
+    : 'Todos os servicos';
+$priceReportTotals = [
+    'servicos' => count($priceReport),
+    'precos' => array_sum(array_map(static fn (array $service): int => count($service['precos']), $priceReport)),
+];
+
 include __DIR__ . '/app/Views/services/page.php';

@@ -15,20 +15,41 @@ final class ProfessionalService
     ) {
     }
 
-    public function saveProfessional(?int $professionalId, array $input): array
+    public function saveProfessional(?int $professionalId, array $input, ?array $photoFile = null): array
     {
+        $uploadedPhoto = null;
+        $photoToDelete = null;
+
         try {
+            $existingProfessional = $professionalId !== null ? $this->repository->findProfessional($professionalId) : null;
+
+            if ($professionalId !== null && !$existingProfessional) {
+                throw new InvalidArgumentException('Profissional nao encontrado.');
+            }
+
             $data = $this->normalizeProfessional($input);
-            $services = $this->normalizeServices($input['servicos'] ?? [], $input['duracoes'] ?? []);
+            $currentPhoto = trim((string) ($existingProfessional['foto'] ?? ''));
+            $data['foto'] = $currentPhoto !== '' ? $currentPhoto : null;
+            $services = $this->normalizeServices($input['servicos'] ?? [], $input);
             $this->pdo->beginTransaction();
             $savedId = $professionalId ?? $this->repository->createProfessional($data);
+            $uploadedPhoto = $this->storePhoto($photoFile ?? [], $savedId);
 
-            if ($professionalId !== null) {
-                $this->repository->updateProfessional($professionalId, $data);
+            if ($uploadedPhoto !== null) {
+                $data['foto'] = $uploadedPhoto;
+                $photoToDelete = $currentPhoto;
+            } elseif (!empty($input['remover_foto'])) {
+                $data['foto'] = null;
+                $photoToDelete = $currentPhoto;
+            }
+
+            if ($professionalId !== null || $uploadedPhoto !== null || !empty($input['remover_foto'])) {
+                $this->repository->updateProfessional($savedId, $data);
             }
 
             $this->repository->syncProfessionalServices($savedId, $services);
             $this->pdo->commit();
+            $this->deletePhoto($photoToDelete);
 
             return [
                 'ok' => true,
@@ -37,10 +58,12 @@ final class ProfessionalService
             ];
         } catch (InvalidArgumentException $exception) {
             $this->rollbackIfNeeded();
+            $this->deletePhoto($uploadedPhoto);
 
             return ['ok' => false, 'message' => $exception->getMessage()];
         } catch (Throwable $exception) {
             $this->rollbackIfNeeded();
+            $this->deletePhoto($uploadedPhoto);
 
             return ['ok' => false, 'message' => 'Nao foi possivel salvar o profissional.'];
         }
@@ -63,6 +86,7 @@ final class ProfessionalService
         }
 
         $this->repository->deleteProfessional($professionalId);
+        $this->deletePhoto($professional['foto'] ?? null);
 
         return ['ok' => true, 'message' => 'Profissional excluido com sucesso.'];
     }
@@ -128,14 +152,20 @@ final class ProfessionalService
             'endereco' => trim((string) ($input['endereco'] ?? '')),
             'telefone' => trim((string) ($input['telefone'] ?? '')),
             'profissao' => trim((string) ($input['profissao'] ?? '')),
+            'foto' => null,
             'permite_editar_guias' => isset($input['permite_editar_guias']) ? 1 : 0,
             'permite_secretaria_liberar_agenda' => isset($input['permite_secretaria_liberar_agenda']) ? 1 : 0,
         ];
     }
 
-    private function normalizeServices(array $selectedServices, array $durations): array
+    private function normalizeServices(array $selectedServices, array $input): array
     {
         $map = [];
+        $durations = is_array($input['duracoes'] ?? null) ? $input['duracoes'] : [];
+        $chargeTypes = is_array($input['cobranca_tipo'] ?? null) ? $input['cobranca_tipo'] : [];
+        $chargeValues = is_array($input['cobranca_valor'] ?? null) ? $input['cobranca_valor'] : [];
+        $taxFlags = is_array($input['cobra_imposto'] ?? null) ? $input['cobra_imposto'] : [];
+        $taxPercentages = is_array($input['imposto_percentual'] ?? null) ? $input['imposto_percentual'] : [];
 
         foreach ($selectedServices as $serviceId) {
             $serviceId = (int) $serviceId;
@@ -145,7 +175,35 @@ final class ProfessionalService
             }
 
             $minutes = max(1, (int) ($durations[$serviceId] ?? 1));
-            $map[$serviceId] = $minutes;
+            $chargeType = (string) ($chargeTypes[$serviceId] ?? 'percentual');
+            $chargeType = $chargeType === 'valor' ? 'valor' : 'percentual';
+            $chargeValue = app_parse_money((string) ($chargeValues[$serviceId] ?? '0'));
+            $taxEnabled = !empty($taxFlags[$serviceId]) ? 1 : 0;
+            $taxPercentage = app_parse_money((string) ($taxPercentages[$serviceId] ?? '0'));
+
+            if ($chargeValue < 0) {
+                $chargeValue = 0;
+            }
+
+            if ($taxPercentage < 0) {
+                $taxPercentage = 0;
+            }
+
+            if ($chargeType === 'percentual' && $chargeValue > 100) {
+                throw new InvalidArgumentException('A porcentagem de cobranca do servico nao pode ser maior que 100%.');
+            }
+
+            if ($taxPercentage > 100) {
+                throw new InvalidArgumentException('A porcentagem de imposto nao pode ser maior que 100%.');
+            }
+
+            $map[$serviceId] = [
+                'tempo_minutos' => $minutes,
+                'cobranca_tipo' => $chargeType,
+                'cobranca_valor' => $chargeValue,
+                'cobra_imposto' => $taxEnabled,
+                'imposto_percentual' => $taxEnabled ? $taxPercentage : 0,
+            ];
         }
 
         return $map;
@@ -194,6 +252,72 @@ final class ProfessionalService
     {
         if ($this->pdo->inTransaction()) {
             $this->pdo->rollBack();
+        }
+    }
+
+    private function storePhoto(array $file, int $professionalId): ?string
+    {
+        $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+
+        if ($error === UPLOAD_ERR_NO_FILE) {
+            return null;
+        }
+
+        if ($error !== UPLOAD_ERR_OK) {
+            throw new InvalidArgumentException('Nao foi possivel enviar a foto. Tente selecionar a imagem novamente.');
+        }
+
+        if ((int) ($file['size'] ?? 0) > 3 * 1024 * 1024) {
+            throw new InvalidArgumentException('A foto deve ter no maximo 3 MB.');
+        }
+
+        $tmpPath = (string) ($file['tmp_name'] ?? '');
+
+        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+            throw new InvalidArgumentException('Arquivo de foto invalido.');
+        }
+
+        $imageInfo = @getimagesize($tmpPath);
+        $mime = (string) ($imageInfo['mime'] ?? '');
+        $extensions = [
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+        ];
+
+        if (!isset($extensions[$mime])) {
+            throw new InvalidArgumentException('Envie a foto em JPG, PNG ou WEBP.');
+        }
+
+        $uploadDir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'profissionais';
+
+        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0775, true) && !is_dir($uploadDir)) {
+            throw new InvalidArgumentException('Nao foi possivel criar a pasta de fotos.');
+        }
+
+        $filename = 'profissional_' . $professionalId . '_foto_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $extensions[$mime];
+        $relativePath = 'uploads/profissionais/' . $filename;
+        $targetPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+
+        if (!move_uploaded_file($tmpPath, $targetPath)) {
+            throw new InvalidArgumentException('Nao foi possivel salvar a foto do profissional.');
+        }
+
+        return $relativePath;
+    }
+
+    private function deletePhoto(?string $path): void
+    {
+        $photo = ltrim(str_replace('\\', '/', trim((string) $path)), '/');
+
+        if ($photo === '' || !str_starts_with($photo, 'uploads/profissionais/') || str_contains($photo, '..')) {
+            return;
+        }
+
+        $fullPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $photo);
+
+        if (is_file($fullPath)) {
+            @unlink($fullPath);
         }
     }
 }

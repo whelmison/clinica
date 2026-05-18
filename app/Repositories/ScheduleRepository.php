@@ -28,7 +28,7 @@ final class ScheduleRepository
     public function professionalsWithServices(): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT DISTINCT p.id, p.nome, p.permite_secretaria_liberar_agenda
+            'SELECT DISTINCT p.id, p.nome, p.telefone, p.profissao, p.permite_secretaria_liberar_agenda
              FROM profissionais p
              INNER JOIN profissional_servico ps ON ps.profissional_id = p.id AND ps.clinica_id = p.clinica_id
              WHERE p.clinica_id = :clinic_id
@@ -663,7 +663,14 @@ final class ScheduleRepository
         $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $appointmentId]);
     }
 
-    public function paginateAppointments(array $filters, int $page, int $perPage, ?int $scopeProfessionalId = null): array
+    public function paginateAppointments(
+        array $filters,
+        int $page,
+        int $perPage,
+        ?int $scopeProfessionalId = null,
+        string $path = 'secretaria_agenda.php',
+        string $pageParam = 'appointment_page'
+    ): array
     {
         [$whereSql, $params] = $this->buildAppointmentWhere($filters, $scopeProfessionalId);
 
@@ -677,7 +684,11 @@ final class ScheduleRepository
         $countStmt->execute($params);
         $total = (int) $countStmt->fetchColumn();
 
-        $pagination = app_pagination($page, $perPage, $total, 'secretaria_agenda.php', $filters, 'appointment_page');
+        $paginationQuery = array_filter(
+            $filters,
+            static fn (mixed $value): bool => $value !== null && $value !== '' && $value !== 0 && $value !== '0'
+        );
+        $pagination = app_pagination($page, $perPage, $total, $path, $paginationQuery, $pageParam);
 
         $sql = 'SELECT a.*,
                        p.nome AS profissional_nome,
@@ -1129,24 +1140,66 @@ final class ScheduleRepository
 
         $guideId = (int) ($filters['guia_id'] ?? 0);
         $patientId = (int) ($filters['paciente_id'] ?? 0);
+        $patient = trim((string) ($filters['paciente'] ?? ''));
+        $patientDigits = preg_replace('/\D+/', '', $patient);
         $professionalId = (int) ($filters['profissional_id'] ?? 0);
         $status = trim((string) ($filters['status'] ?? ''));
+        $startDate = trim((string) ($filters['data_inicio'] ?? ''));
+        $endDate = trim((string) ($filters['data_fim'] ?? ''));
 
         if ($guideId > 0) {
-            $clauses[] = 'EXISTS (
-                SELECT 1
-                FROM guias g
-                WHERE g.id = :guide_id
-                  AND g.clinica_id = a.clinica_id
-                  AND g.paciente_id = a.cliente_id
-                  AND g.profissional_id = a.profissional_id
-            )';
+            if ($this->attendanceAppointmentColumnExists()) {
+                $clauses[] = 'EXISTS (
+                    SELECT 1
+                    FROM atendimentos at
+                    WHERE at.clinica_id = a.clinica_id
+                      AND at.agenda_id = a.id
+                      AND at.guia_id = :guide_id
+                )';
+            } else {
+                $clauses[] = 'EXISTS (
+                    SELECT 1
+                    FROM guias g
+                    WHERE g.id = :guide_id
+                      AND g.clinica_id = a.clinica_id
+                      AND g.paciente_id = a.cliente_id
+                      AND g.profissional_id = a.profissional_id
+                )';
+            }
             $params[':guide_id'] = $guideId;
         }
 
         if ($patientId > 0) {
             $clauses[] = 'a.cliente_id = :patient_id';
             $params[':patient_id'] = $patientId;
+        } elseif ($patient !== '') {
+            $birthDateSql = "DATE_FORMAT(pa.data_nascimento, '%d/%m/%Y')";
+            $birthIsoSql = "DATE_FORMAT(pa.data_nascimento, '%Y-%m-%d')";
+            $search = [
+                'COALESCE(pa.nome, a.cliente_nome) LIKE :patient_search',
+                $birthDateSql . ' LIKE :patient_birth_br',
+                $birthIsoSql . ' LIKE :patient_birth_iso',
+            ];
+            $params[':patient_search'] = '%' . $patient . '%';
+            $params[':patient_birth_br'] = '%' . $patient . '%';
+            $params[':patient_birth_iso'] = '%' . $patient . '%';
+
+            if (strlen($patientDigits) >= 2) {
+                $cpfDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa.cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '')";
+                $phoneDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa.telefone, a.cliente_telefone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '')";
+                $emergencyDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa.telefone_emergencia, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '')";
+                $birthDigitsSql = "DATE_FORMAT(pa.data_nascimento, '%d%m%Y')";
+                $search[] = $cpfDigitsSql . ' LIKE :patient_cpf_digits';
+                $search[] = $phoneDigitsSql . ' LIKE :patient_phone_digits';
+                $search[] = $emergencyDigitsSql . ' LIKE :patient_emergency_digits';
+                $search[] = $birthDigitsSql . ' LIKE :patient_birth_digits';
+                $params[':patient_cpf_digits'] = '%' . $patientDigits . '%';
+                $params[':patient_phone_digits'] = '%' . $patientDigits . '%';
+                $params[':patient_emergency_digits'] = '%' . $patientDigits . '%';
+                $params[':patient_birth_digits'] = '%' . $patientDigits . '%';
+            }
+
+            $clauses[] = '(' . implode(' OR ', $search) . ')';
         }
 
         if ($professionalId > 0) {
@@ -1157,6 +1210,16 @@ final class ScheduleRepository
         if ($status !== '') {
             $clauses[] = 'a.status = :status';
             $params[':status'] = $status;
+        }
+
+        if ($startDate !== '') {
+            $clauses[] = 'a.data_agendamento >= :start_date';
+            $params[':start_date'] = $startDate;
+        }
+
+        if ($endDate !== '') {
+            $clauses[] = 'a.data_agendamento <= :end_date';
+            $params[':end_date'] = $endDate;
         }
 
         $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';

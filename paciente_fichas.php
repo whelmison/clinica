@@ -6,10 +6,16 @@ app_install_schema($conn);
 $clinicId = app_active_clinic_id();
 $patientId = app_request_method() === 'POST' ? app_post_int('paciente_id') : app_query_int('paciente_id');
 $activeTab = app_request_query('tab', 'avaliacao') ?? 'avaliacao';
+$currentProfessionalId = app_current_professional_id();
+
+if (!app_is_professional_user() || $currentProfessionalId === null || $currentProfessionalId <= 0) {
+    app_flash('danger', 'As fichas do paciente sao exclusivas do profissional responsavel.');
+    app_redirect(app_profile_home());
+}
 
 if ($patientId <= 0) {
     app_flash('danger', 'Paciente nao informado.');
-    app_redirect('pacientes.php');
+    app_redirect('index.php');
 }
 
 $patient = app_stmt_one(
@@ -26,7 +32,7 @@ $patient = app_stmt_one(
 
 if (!$patient) {
     app_flash('danger', 'Paciente nao encontrado ou sem permissao.');
-    app_redirect('pacientes.php');
+    app_redirect('index.php');
 }
 
 function patient_sheet_text(string $key): string
@@ -262,9 +268,9 @@ if (app_request_method() === 'POST') {
         $evaluationId = app_post_int('avaliacao_id');
         $ok = $evaluationId > 0 && app_stmt_execute(
             $conn,
-            'DELETE FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ?',
-            'iii',
-            [$clinicId, $patientId, $evaluationId]
+            'DELETE FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ? AND profissional_id = ?',
+            'iiii',
+            [$clinicId, $patientId, $evaluationId, $currentProfessionalId]
         );
 
         app_flash($ok ? 'success' : 'danger', $ok ? 'Ficha de avaliacao excluida.' : 'Nao foi possivel excluir a ficha de avaliacao.');
@@ -279,7 +285,7 @@ if (app_request_method() === 'POST') {
             app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'avaliacao']));
         }
 
-        $profissionalId = app_post_int('profissional_id') ?: null;
+        $profissionalId = $currentProfessionalId;
         $evaluationId = app_post_int('avaliacao_id');
         $detailFieldMetas = patient_evaluation_detail_fields();
         $detailFields = array_keys($detailFieldMetas);
@@ -342,9 +348,9 @@ if (app_request_method() === 'POST') {
         if ($evaluationId > 0) {
             $existingEvaluation = app_stmt_one(
                 $conn,
-                'SELECT id FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ? LIMIT 1',
-                'iii',
-                [$clinicId, $patientId, $evaluationId]
+                'SELECT id FROM paciente_fichas_avaliacao WHERE clinica_id = ? AND paciente_id = ? AND id = ? AND profissional_id = ? LIMIT 1',
+                'iiii',
+                [$clinicId, $patientId, $evaluationId, $currentProfessionalId]
             );
 
             if (!$existingEvaluation) {
@@ -357,9 +363,9 @@ if (app_request_method() === 'POST') {
             $setSql = implode(', ', array_map(static fn (string $column): string => $column . ' = ?', $updateColumns));
             $ok = app_stmt_execute(
                 $conn,
-                'UPDATE paciente_fichas_avaliacao SET ' . $setSql . ' WHERE clinica_id = ? AND paciente_id = ? AND id = ?',
-                'i' . str_repeat('s', count($updateValues) - 1) . 'iii',
-                array_merge($updateValues, [$clinicId, $patientId, $evaluationId])
+                'UPDATE paciente_fichas_avaliacao SET ' . $setSql . ' WHERE clinica_id = ? AND paciente_id = ? AND id = ? AND profissional_id = ?',
+                'i' . str_repeat('s', count($updateValues) - 1) . 'iiii',
+                array_merge($updateValues, [$clinicId, $patientId, $evaluationId, $currentProfessionalId])
             );
         } else {
             $placeholders = implode(', ', array_fill(0, count($columns), '?'));
@@ -384,12 +390,34 @@ if (app_request_method() === 'POST') {
         }
 
         $atendimentoId = app_post_int('atendimento_id') ?: null;
-        $profissionalId = app_post_int('profissional_id') ?: null;
+        $profissionalId = $currentProfessionalId;
         $condutas = patient_sheet_text('condutas_observacoes');
 
         if ($condutas === '') {
             app_flash('danger', 'Informe as condutas realizadas e observacoes.');
             app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'evolucao']));
+        }
+
+        if ($atendimentoId !== null) {
+            $attendanceAllowed = app_stmt_one(
+                $conn,
+                'SELECT a.id
+                 FROM atendimentos a
+                 LEFT JOIN guias g ON g.id = a.guia_id AND g.clinica_id = a.clinica_id
+                 LEFT JOIN agenda ag ON ag.id = a.agenda_id AND ag.clinica_id = a.clinica_id
+                 WHERE a.clinica_id = ?
+                   AND a.paciente_id = ?
+                   AND a.id = ?
+                   AND COALESCE(g.profissional_id, ag.profissional_id) = ?
+                 LIMIT 1',
+                'iiii',
+                [$clinicId, $patientId, $atendimentoId, $currentProfessionalId]
+            );
+
+            if (!$attendanceAllowed) {
+                app_flash('danger', 'Atendimento nao encontrado para este profissional.');
+                app_redirect('paciente_fichas.php?' . app_build_query(['paciente_id' => $patientId, 'tab' => 'evolucao']));
+            }
         }
 
         $ok = app_stmt_execute(
@@ -419,11 +447,8 @@ if (app_request_method() === 'POST') {
 }
 
 $professionals = app_fetch_profissionais($conn);
-$currentProfessionalId = app_current_professional_id();
-
-if ($currentProfessionalId !== null && app_is_professional_user()) {
-    $professionals = array_values(array_filter($professionals, static fn (array $row): bool => (int) $row['id'] === $currentProfessionalId));
-}
+$professionals = array_values(array_filter($professionals, static fn (array $row): bool => (int) $row['id'] === $currentProfessionalId));
+$currentProfessionalName = $professionals[0]['nome'] ?? 'Profissional logado';
 
 $attendanceOptions = app_stmt_all(
     $conn,
@@ -440,10 +465,11 @@ $attendanceOptions = app_stmt_all(
      LEFT JOIN servicos s ON s.id = ag.servico_id AND s.clinica_id = ag.clinica_id
      WHERE a.clinica_id = ?
        AND a.paciente_id = ?
+       AND COALESCE(g.profissional_id, ag.profissional_id) = ?
      ORDER BY a.data DESC, a.id DESC
      LIMIT 60',
-    'ii',
-    [$clinicId, $patientId]
+    'iii',
+    [$clinicId, $patientId, $currentProfessionalId]
 );
 
 $evaluations = app_stmt_all(
@@ -453,9 +479,10 @@ $evaluations = app_stmt_all(
      LEFT JOIN profissionais pr ON pr.id = fa.profissional_id AND pr.clinica_id = fa.clinica_id
      WHERE fa.clinica_id = ?
        AND fa.paciente_id = ?
+       AND fa.profissional_id = ?
      ORDER BY fa.data_avaliacao DESC, fa.id DESC',
-    'ii',
-    [$clinicId, $patientId]
+    'iii',
+    [$clinicId, $patientId, $currentProfessionalId]
 );
 
 $editEvaluationId = app_query_int('avaliacao_id');
@@ -501,9 +528,10 @@ $evolutions = app_stmt_all(
      LEFT JOIN profissionais pr ON pr.id = fe.profissional_id AND pr.clinica_id = fe.clinica_id
      WHERE fe.clinica_id = ?
        AND fe.paciente_id = ?
+       AND fe.profissional_id = ?
      ORDER BY fe.data_evolucao DESC, fe.id DESC',
-    'ii',
-    [$clinicId, $patientId]
+    'iii',
+    [$clinicId, $patientId, $currentProfessionalId]
 );
 
 $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab : 'avaliacao';
@@ -817,8 +845,7 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <a class="btn btn-light btn-sm px-3" href="paciente_historico.php?paciente_id=<?= (int) $patientId ?>">Historico</a>
-                <a class="btn btn-outline-light btn-sm px-3" href="pacientes.php?<?= app_h(app_build_query(['paciente' => (string) $patient['nome'], 'filtrar' => 1, 'patient_id' => $patientId])) ?>">Editar paciente</a>
-                <a class="btn btn-outline-light btn-sm px-3" href="pacientes.php">Voltar</a>
+                <a class="btn btn-outline-light btn-sm px-3" href="index.php">Voltar</a>
             </div>
         </div>
     </section>
@@ -857,12 +884,8 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                                 </div>
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted">Profissional</label>
-                                    <select name="profissional_id" class="form-select" title="Fisioterapeuta responsavel pela avaliacao.">
-                                        <option value="">Nao informado</option>
-                                        <?php foreach ($professionals as $professional): ?>
-                                            <option value="<?= (int) $professional['id'] ?>" <?= (int) $professional['id'] === (int) $evaluationFormValues['profissional_id'] ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
+                                    <input type="hidden" name="profissional_id" value="<?= (int) $currentProfessionalId ?>">
+                                    <input type="text" class="form-control" value="<?= app_h((string) $currentProfessionalName) ?>" readonly title="A ficha fica vinculada automaticamente ao profissional logado.">
                                 </div>
                                 <div class="col-md-4">
                                     <label class="form-label small text-muted">Sexo</label>
@@ -1083,12 +1106,8 @@ $activeTab = in_array($activeTab, ['avaliacao', 'evolucao'], true) ? $activeTab 
                                 </div>
                                 <div class="col-md-8">
                                     <label class="form-label small text-muted">Profissional</label>
-                                    <select name="profissional_id" class="form-select" title="Fisioterapeuta responsavel por esta evolucao.">
-                                        <option value="">Nao informado</option>
-                                        <?php foreach ($professionals as $professional): ?>
-                                            <option value="<?= (int) $professional['id'] ?>" <?= $currentProfessionalId !== null && (int) $professional['id'] === $currentProfessionalId ? 'selected' : '' ?>><?= app_h((string) $professional['nome']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
+                                    <input type="hidden" name="profissional_id" value="<?= (int) $currentProfessionalId ?>">
+                                    <input type="text" class="form-control" value="<?= app_h((string) $currentProfessionalName) ?>" readonly title="A evolucao fica vinculada automaticamente ao profissional logado.">
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label small text-muted">Condutas realizadas e observacoes</label>

@@ -12,7 +12,7 @@ final class PatientService
     {
     }
 
-    public function save(?int $patientId, array $input): array
+    public function save(?int $patientId, array $input, ?array $user = null): array
     {
         try {
             if ($patientId !== null && !$this->repository->find($patientId)) {
@@ -31,6 +31,7 @@ final class PatientService
 
             if ($patientId === null) {
                 $savedId = $this->repository->create($data);
+                $this->linkProfessionalIfNeeded($savedId, $user, 'cadastro');
 
                 return [
                     'ok' => true,
@@ -40,6 +41,7 @@ final class PatientService
             }
 
             $this->repository->update($patientId, $data);
+            $this->linkProfessionalIfNeeded($patientId, $user, 'edicao');
 
             return [
                 'ok' => true,
@@ -51,6 +53,21 @@ final class PatientService
         } catch (Throwable $exception) {
             return ['ok' => false, 'message' => 'Nao foi possivel salvar o paciente.'];
         }
+    }
+
+    private function linkProfessionalIfNeeded(int $patientId, ?array $user, string $origin): void
+    {
+        if (($user['perfil'] ?? '') !== 'profissional') {
+            return;
+        }
+
+        $professionalId = (int) ($user['profissional_id'] ?? 0);
+
+        if ($professionalId <= 0) {
+            return;
+        }
+
+        $this->repository->linkProfessional($patientId, $professionalId, $origin);
     }
 
     private function normalize(array $input): array

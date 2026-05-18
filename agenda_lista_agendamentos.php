@@ -13,11 +13,11 @@ $currentUser = app_current_user() ?? [];
 $canManageAppointments = $scheduleService->canManageAppointments($currentUser);
 $statuses = app_schedule_statuses();
 $professionals = $scheduleRepository->professionals();
-$patients = $scheduleRepository->patients();
 
 $appointmentFilters = [
     'guia_id' => app_query_int('guia_id'),
     'paciente_id' => app_query_int('paciente_id'),
+    'paciente' => trim((string) app_request_query('paciente', '')),
     'profissional_id' => app_query_int('profissional_id'),
     'status' => app_request_query('status', '') ?? '',
     'data_inicio' => app_request_query('data_inicio', ''),
@@ -28,12 +28,26 @@ if (app_is_professional_user()) {
     $appointmentFilters['profissional_id'] = (int) app_current_professional_id();
 }
 
-$pageData = $scheduleRepository->paginateAppointments($appointmentFilters, max(1, app_query_int('page', 1)), 20, app_is_professional_user() ? app_current_professional_id() : null);
+if ((int) $appointmentFilters['paciente_id'] > 0 && $appointmentFilters['paciente'] === '') {
+    $selectedPatient = $scheduleRepository->findPatient((int) $appointmentFilters['paciente_id']);
+    $appointmentFilters['paciente'] = (string) ($selectedPatient['nome'] ?? '');
+}
+
+$pageData = $scheduleRepository->paginateAppointments(
+    $appointmentFilters,
+    max(1, app_query_int('page', 1)),
+    20,
+    app_is_professional_user() ? app_current_professional_id() : null,
+    'agenda_lista_agendamentos.php',
+    'page'
+);
 $appointments = $pageData['items'];
 $pagination = $pageData['pagination'];
 $groupWhere = ['g.clinica_id = ?'];
 $groupTypes = 'i';
 $groupParams = [$clinicId = app_active_clinic_id()];
+$patientSearch = trim((string) ($appointmentFilters['paciente'] ?? ''));
+$patientDigits = preg_replace('/\D+/', '', $patientSearch);
 
 if (!empty($appointmentFilters['data_inicio'])) {
     $groupWhere[] = 'g.data_agendamento >= ?';
@@ -51,6 +65,74 @@ if (!empty($appointmentFilters['profissional_id'])) {
     $groupWhere[] = 'g.profissional_id = ?';
     $groupTypes .= 'i';
     $groupParams[] = (int) $appointmentFilters['profissional_id'];
+}
+
+if (!empty($appointmentFilters['guia_id'])) {
+    $groupWhere[] = 'EXISTS (
+        SELECT 1
+        FROM agenda_grupo_pacientes gp_filter
+        WHERE gp_filter.clinica_id = g.clinica_id
+          AND gp_filter.grupo_id = g.id
+          AND gp_filter.guia_id = ?
+    )';
+    $groupTypes .= 'i';
+    $groupParams[] = (int) $appointmentFilters['guia_id'];
+}
+
+if (!empty($appointmentFilters['paciente_id'])) {
+    $groupWhere[] = 'EXISTS (
+        SELECT 1
+        FROM agenda_grupo_pacientes gp_filter
+        WHERE gp_filter.clinica_id = g.clinica_id
+          AND gp_filter.grupo_id = g.id
+          AND gp_filter.paciente_id = ?
+    )';
+    $groupTypes .= 'i';
+    $groupParams[] = (int) $appointmentFilters['paciente_id'];
+} elseif ($patientSearch !== '') {
+    $groupPatientClauses = [
+        'pa_filter.nome LIKE ?',
+        "DATE_FORMAT(pa_filter.data_nascimento, '%d/%m/%Y') LIKE ?",
+        "DATE_FORMAT(pa_filter.data_nascimento, '%Y-%m-%d') LIKE ?",
+    ];
+    $groupPatientTypes = 'sss';
+    $groupPatientParams = ['%' . $patientSearch . '%', '%' . $patientSearch . '%', '%' . $patientSearch . '%'];
+
+    if (strlen($patientDigits) >= 2) {
+        $digitLike = '%' . $patientDigits . '%';
+        $groupPatientClauses[] = "REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa_filter.cpf, ''), '.', ''), '-', ''), '/', ''), ' ', '') LIKE ?";
+        $groupPatientClauses[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa_filter.telefone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '') LIKE ?";
+        $groupPatientClauses[] = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pa_filter.telefone_emergencia, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '') LIKE ?";
+        $groupPatientClauses[] = "DATE_FORMAT(pa_filter.data_nascimento, '%d%m%Y') LIKE ?";
+        $groupPatientTypes .= 'ssss';
+        $groupPatientParams[] = $digitLike;
+        $groupPatientParams[] = $digitLike;
+        $groupPatientParams[] = $digitLike;
+        $groupPatientParams[] = $digitLike;
+    }
+
+    $groupWhere[] = 'EXISTS (
+        SELECT 1
+        FROM agenda_grupo_pacientes gp_filter
+        INNER JOIN pacientes pa_filter ON pa_filter.id = gp_filter.paciente_id AND pa_filter.clinica_id = gp_filter.clinica_id
+        WHERE gp_filter.clinica_id = g.clinica_id
+          AND gp_filter.grupo_id = g.id
+          AND (' . implode(' OR ', $groupPatientClauses) . ')
+    )';
+    $groupTypes .= $groupPatientTypes;
+    $groupParams = array_merge($groupParams, $groupPatientParams);
+}
+
+if ($appointmentFilters['status'] !== '') {
+    $groupWhere[] = 'EXISTS (
+        SELECT 1
+        FROM agenda_grupo_pacientes gp_filter
+        WHERE gp_filter.clinica_id = g.clinica_id
+          AND gp_filter.grupo_id = g.id
+          AND gp_filter.status = ?
+    )';
+    $groupTypes .= 's';
+    $groupParams[] = $appointmentFilters['status'];
 }
 
 $groupAppointments = app_stmt_all(
@@ -74,6 +156,7 @@ $groupAppointments = app_stmt_all(
 $appointmentListReturnQuery = app_build_query([
     'guia_id' => $appointmentFilters['guia_id'] ?: null,
     'paciente_id' => $appointmentFilters['paciente_id'] ?: null,
+    'paciente' => $appointmentFilters['paciente'],
     'profissional_id' => $appointmentFilters['profissional_id'] ?: null,
     'status' => $appointmentFilters['status'],
     'data_inicio' => $appointmentFilters['data_inicio'],
@@ -83,6 +166,37 @@ $appointmentListReturnQuery = app_build_query([
 $appointmentListReturnPath = 'agenda_lista_agendamentos.php' . ($appointmentListReturnQuery !== '' ? '?' . $appointmentListReturnQuery : '');
 
 $reportOptions = $reportRepository->filters();
+$appointmentReportLines = [];
+$appointmentReportMetrics = [
+    'Agendamentos individuais: ' . count($appointments),
+    'Agendamentos em grupo: ' . count($groupAppointments),
+];
+
+if (!empty($appointmentFilters['data_inicio']) || !empty($appointmentFilters['data_fim'])) {
+    $appointmentReportLines[] = 'Periodo: '
+        . ($appointmentFilters['data_inicio'] ? app_date_br((string) $appointmentFilters['data_inicio']) : 'inicio')
+        . ' a '
+        . ($appointmentFilters['data_fim'] ? app_date_br((string) $appointmentFilters['data_fim']) : 'fim');
+} else {
+    $appointmentReportLines[] = 'Periodo: todos';
+}
+
+if ($appointmentFilters['paciente'] !== '') {
+    $appointmentReportLines[] = 'Paciente: ' . $appointmentFilters['paciente'];
+}
+
+if (!empty($appointmentFilters['profissional_id'])) {
+    foreach ($professionals as $professional) {
+        if ((int) $professional['id'] === (int) $appointmentFilters['profissional_id']) {
+            $appointmentReportLines[] = 'Profissional: ' . (string) $professional['nome'];
+            break;
+        }
+    }
+}
+
+if ($appointmentFilters['status'] !== '') {
+    $appointmentReportLines[] = 'Status: ' . ($statuses[$appointmentFilters['status']] ?? $appointmentFilters['status']);
+}
 
 function format_whatsapp_link($phone, $message) {
     if (empty($phone)) return '#';
@@ -182,46 +296,102 @@ function format_whatsapp_link($phone, $message) {
     padding: 0.32rem 0.5rem;
     font-size: 0.72rem;
 }
+.schedule-patient-filter {
+    min-width: 230px;
+}
+.schedule-autocomplete-wrap {
+    position: relative;
+}
+.schedule-autocomplete-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    left: 0;
+    z-index: 1050;
+    display: none;
+    max-height: 260px;
+    overflow: auto;
+    padding: 0.28rem;
+    border: 1px solid rgba(18, 73, 88, 0.14);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 14px 32px rgba(22, 51, 63, 0.16);
+}
+.schedule-autocomplete-menu.is-open {
+    display: grid;
+    gap: 0.18rem;
+}
+.schedule-autocomplete-option {
+    width: 100%;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #1d3945;
+    text-align: left;
+    padding: 0.42rem 0.48rem;
+}
+.schedule-autocomplete-option:hover,
+.schedule-autocomplete-option:focus,
+.schedule-autocomplete-option.is-active {
+    background: rgba(15, 92, 74, 0.1);
+    outline: none;
+}
+.schedule-autocomplete-name {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.15;
+}
+.schedule-autocomplete-meta {
+    display: block;
+    margin-top: 0.12rem;
+    color: #68828f;
+    font-size: 0.62rem;
+    line-height: 1.15;
+}
+<?= app_report_print_header_css() ?>
 @media print {
-    body { background: #fff !important; margin: 0; padding: 0; }
-    .page-shell { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
-    .no-print { display: none !important; }
-    .soft-card { border: none !important; box-shadow: none !important; }
-    .table th { background-color: #f8f9fa !important; color: #000 !important; }
-    .page-hero { display: none !important; }
-    .table td .d-flex { display: none !important; }
-    h3 { margin-bottom: 1rem !important; }
+    .schedule-list-shell {
+        padding: 0 !important;
+    }
+    .schedule-list-shell .row {
+        display: block !important;
+        margin: 0 !important;
+    }
+    .schedule-list-shell .col-12 {
+        width: 100% !important;
+        padding: 0 !important;
+    }
+    .schedule-list-report-section + .schedule-list-report-section {
+        margin-top: 6mm !important;
+    }
 }
 </style>
 </head>
-<body>
+<body class="app-print-page">
 
 <div class="no-print">
 <?php include 'partials/menu.php'; ?>
 </div>
 
 <div class="container page-shell schedule-list-shell">
-    <section class="page-hero">
+    <section class="page-hero app-print-hide">
         <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-end">
             <div>
                 <h3 class="mb-2">Lista de Agendamentos</h3>
                 <p>Todos os atendimentos marcados com filtros compactos para secretaria.</p>
             </div>
             <div class="d-flex flex-wrap gap-2 no-print">
-                <button class="btn btn-outline-secondary rounded-pill px-3 btn-sm" onclick="window.print()">Imprimir</button>
+                <button class="btn btn-outline-secondary rounded-pill px-3 btn-sm" data-export-list onclick="appExportList('appointmentsReportArea', 'jpg', 'lista_agendamentos')">Exportar JPG</button>
+                <button class="btn btn-outline-secondary rounded-pill px-3 btn-sm" onclick="window.print()">Imprimir relatorio</button>
                 <a href="secretaria_agenda.php" class="btn btn-light rounded-pill px-3 btn-sm">Voltar</a>
             </div>
         </div>
     </section>
 
-    <div class="d-none d-print-block mb-4">
-        <h2>Lista de Agendamentos</h2>
-        <p>Filtrado por periodo: <?= app_h($appointmentFilters['data_inicio']) ?> a <?= app_h($appointmentFilters['data_fim']) ?></p>
-    </div>
-
-    <div class="soft-card card mt-4">
+    <div class="soft-card card mt-4 app-print-hide">
         <div class="card-body no-print">
-            <form class="toolbar-grid" method="GET">
+            <form class="toolbar-grid" method="GET" id="appointmentListFilterForm">
                 <div>
                     <label class="form-label small text-muted">Data Inicio</label>
                     <input type="date" name="data_inicio" class="form-control" value="<?= app_h($appointmentFilters['data_inicio']) ?>">
@@ -241,16 +411,13 @@ function format_whatsapp_link($phone, $message) {
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div>
+                <div class="schedule-patient-filter">
                     <label class="form-label small text-muted">Paciente</label>
-                    <select class="form-select" name="paciente_id">
-                        <option value="">Todos</option>
-                        <?php foreach ($patients as $patient): ?>
-                            <option value="<?= (int) $patient['id'] ?>" <?= (int) $appointmentFilters['paciente_id'] === (int) $patient['id'] ? 'selected' : '' ?>>
-                                <?= app_h($patient['nome']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <input type="hidden" name="paciente_id" id="appointmentFilterPacienteId" value="<?= (int) ($appointmentFilters['paciente_id'] ?? 0) > 0 ? (int) $appointmentFilters['paciente_id'] : '' ?>">
+                    <div class="schedule-autocomplete-wrap">
+                        <input type="text" name="paciente" id="appointmentFilterPacienteBusca" class="form-control" placeholder="Nome, CPF, contato ou nascimento" autocomplete="off" value="<?= app_h((string) ($appointmentFilters['paciente'] ?? '')) ?>">
+                        <div class="schedule-autocomplete-menu" id="appointmentFilterPacienteMenu"></div>
+                    </div>
                 </div>
                 <div>
                     <label class="form-label small text-muted">Profissional</label>
@@ -284,7 +451,10 @@ function format_whatsapp_link($phone, $message) {
         </div>
     </div>
 
-    <div class="row g-3 mt-1">
+    <div class="app-print-report-area" id="appointmentsReportArea">
+    <?= app_report_print_header($conn, 'Lista de agendamentos', $appointmentReportLines, $appointmentReportMetrics) ?>
+
+    <div class="row g-3 mt-1 schedule-list-report-section">
         <div class="col-12">
             <div class="soft-card card">
                 <div class="card-body p-0">
@@ -367,7 +537,7 @@ function format_whatsapp_link($phone, $message) {
         </div>
     </div>
 
-    <div class="row g-3 mt-1">
+    <div class="row g-3 mt-1 schedule-list-report-section">
         <div class="col-12">
             <div class="soft-card card">
                 <div class="card-header no-print">
@@ -416,7 +586,170 @@ function format_whatsapp_link($phone, $message) {
             </div>
         </div>
     </div>
+    </div>
 </div>
+
+<script src="assets/list-export.js"></script>
+<script>
+const appointmentFilterForm = document.getElementById('appointmentListFilterForm');
+const appointmentPatientInput = document.getElementById('appointmentFilterPacienteBusca');
+const appointmentPatientMenu = document.getElementById('appointmentFilterPacienteMenu');
+const appointmentPatientId = document.getElementById('appointmentFilterPacienteId');
+
+function closeAppointmentPatientMenu() {
+    if (!appointmentPatientMenu) return;
+    appointmentPatientMenu.classList.remove('is-open');
+    appointmentPatientMenu.innerHTML = '';
+}
+
+function submitAppointmentFilters() {
+    if (!appointmentFilterForm) return;
+    if (typeof appointmentFilterForm.requestSubmit === 'function') {
+        appointmentFilterForm.requestSubmit();
+        return;
+    }
+    appointmentFilterForm.submit();
+}
+
+function setupAppointmentPatientAutocomplete() {
+    if (!appointmentFilterForm || !appointmentPatientInput || !appointmentPatientMenu || !appointmentPatientId) return;
+
+    let timer = null;
+    let controller = null;
+    let results = [];
+    let activeIndex = -1;
+
+    function setActiveOption(nextIndex) {
+        const options = Array.from(appointmentPatientMenu.querySelectorAll('.schedule-autocomplete-option'));
+        if (!options.length) {
+            activeIndex = -1;
+            return;
+        }
+
+        activeIndex = (nextIndex + options.length) % options.length;
+        options.forEach((option, index) => {
+            option.classList.toggle('is-active', index === activeIndex);
+            option.setAttribute('aria-selected', index === activeIndex ? 'true' : 'false');
+        });
+        options[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function choosePatient(patient) {
+        if (!patient) return;
+        appointmentPatientInput.value = patient.nome || '';
+        appointmentPatientId.value = String(patient.id || '');
+        closeAppointmentPatientMenu();
+        submitAppointmentFilters();
+    }
+
+    function renderMenu(items) {
+        results = items;
+        activeIndex = -1;
+        appointmentPatientMenu.innerHTML = '';
+
+        if (!items.length) {
+            closeAppointmentPatientMenu();
+            return;
+        }
+
+        items.forEach((patient, index) => {
+            const button = document.createElement('button');
+            const name = document.createElement('span');
+            const meta = document.createElement('span');
+            const metaParts = [];
+
+            button.type = 'button';
+            button.className = 'schedule-autocomplete-option';
+            button.setAttribute('role', 'option');
+            button.setAttribute('aria-selected', 'false');
+
+            name.className = 'schedule-autocomplete-name';
+            name.textContent = patient.nome || '';
+            button.appendChild(name);
+
+            if (patient.cpf) metaParts.push('CPF/CNPJ: ' + patient.cpf);
+            if (patient.data_nascimento) metaParts.push('Nasc.: ' + patient.data_nascimento);
+            if (patient.telefone) metaParts.push('Contato: ' + patient.telefone);
+
+            if (metaParts.length) {
+                meta.className = 'schedule-autocomplete-meta';
+                meta.textContent = metaParts.join(' | ');
+                button.appendChild(meta);
+            }
+
+            button.addEventListener('mousedown', (event) => {
+                event.preventDefault();
+            });
+            button.addEventListener('click', () => {
+                choosePatient(results[index]);
+            });
+            appointmentPatientMenu.appendChild(button);
+        });
+
+        appointmentPatientMenu.classList.add('is-open');
+    }
+
+    appointmentPatientInput.addEventListener('input', () => {
+        const term = appointmentPatientInput.value.trim();
+        appointmentPatientId.value = '';
+        window.clearTimeout(timer);
+
+        if (term.length < 2) {
+            if (controller) controller.abort();
+            closeAppointmentPatientMenu();
+            return;
+        }
+
+        timer = window.setTimeout(async () => {
+            if (controller) controller.abort();
+            controller = new AbortController();
+
+            try {
+                const response = await fetch('pacientes_busca.php?q=' + encodeURIComponent(term), {
+                    signal: controller.signal
+                });
+                const data = await response.json();
+                renderMenu(data.pacientes || []);
+            } catch (error) {
+                if (error.name !== 'AbortError') closeAppointmentPatientMenu();
+            }
+        }, 160);
+    });
+
+    appointmentPatientInput.addEventListener('keydown', (event) => {
+        const isOpen = appointmentPatientMenu.classList.contains('is-open');
+
+        if (event.key === 'ArrowDown' && results.length) {
+            event.preventDefault();
+            if (!isOpen) appointmentPatientMenu.classList.add('is-open');
+            setActiveOption(activeIndex + 1);
+            return;
+        }
+
+        if (event.key === 'ArrowUp' && results.length) {
+            event.preventDefault();
+            setActiveOption(activeIndex <= 0 ? results.length - 1 : activeIndex - 1);
+            return;
+        }
+
+        if (event.key === 'Enter' && isOpen && activeIndex >= 0) {
+            event.preventDefault();
+            choosePatient(results[activeIndex]);
+            return;
+        }
+
+        if (event.key === 'Escape') closeAppointmentPatientMenu();
+    });
+
+    document.addEventListener('click', (event) => {
+        if (!appointmentPatientMenu.contains(event.target) && event.target !== appointmentPatientInput) {
+            closeAppointmentPatientMenu();
+        }
+    });
+}
+
+setupAppointmentPatientAutocomplete();
+</script>
 
 </body>
 </html>

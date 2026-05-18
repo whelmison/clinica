@@ -5,6 +5,10 @@ if (app_request_method() !== 'POST') {
     app_json(['ok' => false, 'message' => 'Metodo invalido.'], 405);
 }
 
+if (app_is_professional_user() || !app_has_any_role(['secretaria', 'administrativo', 'desenvolvedor'])) {
+    app_json(['ok' => false, 'message' => 'Glosa e uma marcacao administrativa.'], 403);
+}
+
 $id = app_post_int('id');
 $status = trim((string) ($_POST['status'] ?? 'Realizado'));
 $allowedStatuses = ['Realizado', 'Glosado'];

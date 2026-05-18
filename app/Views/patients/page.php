@@ -562,10 +562,11 @@ body {
         grid-template-columns: 1fr;
     }
 }
+<?= app_report_print_header_css() ?>
 </style>
 </head>
 
-<body>
+<body class="app-print-page">
 
 <?php include 'partials/menu.php'; ?>
 
@@ -573,7 +574,7 @@ body {
 
 <div class="container-fluid patient-shell">
 
-<section class="patient-topbar">
+<section class="patient-topbar app-print-hide">
 <div>
 <p class="patient-kicker">Cadastro de pacientes</p>
 <h3>Pacientes</h3>
@@ -583,12 +584,14 @@ body {
 <button type="submit" form="patientFilterForm" name="filtrar" value="1" class="btn btn-light text-secondary">Filtrar</button>
 <a href="pacientes.php" class="btn btn-outline-light">Limpar filtro</a>
 <button type="button" class="btn btn-outline-light" data-export-list onclick="appExportList('patientsExportArea', 'jpg', 'pacientes')">Exportar JPG</button>
-<button type="button" class="btn btn-outline-light" data-export-list onclick="appExportList('patientsExportArea', 'pdf', 'pacientes')">Exportar PDF</button>
+<button type="button" class="btn btn-outline-light" onclick="window.print()">Imprimir relatorio</button>
+<?php if (!empty($canCreatePatients)): ?>
 <button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#patientFormModal">+ Novo paciente</button>
+<?php endif; ?>
 </div>
 </section>
 
-<div class="patient-filter-card p-2">
+<div class="patient-filter-card p-2 app-print-hide">
 <form method="GET" id="patientFilterForm" class="row g-2 align-items-end">
 <div class="col-md-5">
 <label class="form-label small text-muted">Paciente</label>
@@ -617,8 +620,17 @@ body {
 </form>
 </div>
 
-<section class="patient-list-panel" id="patientsExportArea">
-<div class="patient-list-head">
+<section class="patient-list-panel app-print-report-area" id="patientsExportArea">
+<?= app_report_print_header($conn, 'Pacientes', [
+    trim((string) ($patientFilters['paciente'] ?? '')) !== '' ? 'Paciente: ' . trim((string) $patientFilters['paciente']) : 'Todos os pacientes',
+    trim((string) ($patientFilters['plano'] ?? '')) !== '' ? 'Plano: ' . trim((string) $patientFilters['plano']) : '',
+    trim((string) ($patientFilters['status'] ?? '')) !== '' ? 'Status: ' . trim((string) $patientFilters['status']) : '',
+], [
+    'Pacientes listados: ' . ($shouldLoadPatients ? count($patientRows) : 0),
+    'Sem guia: ' . count($semGuiaLista),
+    'Prestes a ficar sem guia: ' . count($prestesLista),
+]) ?>
+<div class="patient-list-head app-print-hide">
 <h5>Lista enxuta</h5>
 <span>Use os filtros acima e clique em Filtrar</span>
 </div>
@@ -634,7 +646,7 @@ body {
 <th>Ultimo plano</th>
 <th>Preferencia</th>
 <th>Status</th>
-<th>Acoes</th>
+<th class="app-print-actions">Acoes</th>
 </tr>
 
 </thead>
@@ -667,14 +679,20 @@ body {
 <td data-status="<?= app_h((string) $patient['status_text']) ?>">
     <span class="<?= app_h((string) $patient['status_class']) ?>"><?= app_h((string) $patient['status_text']) ?></span>
 </td>
-<td class="acoes">
+<td class="acoes app-print-actions">
     <a href="paciente_historico.php?paciente_id=<?= (int) $patient['id'] ?>" class="btn btn-sm btn-outline-success">Historico</a>
+    <?php if (!empty($canAccessPatientSheets)): ?>
     <a href="paciente_fichas.php?paciente_id=<?= (int) $patient['id'] ?>" class="btn btn-sm btn-outline-primary">Fichas</a>
+    <?php endif; ?>
+    <?php if (!empty($canEditPatients)): ?>
     <a href="pacientes.php?<?= app_h(app_patient_filter_query($patientFilters, ['patient_id' => $patient['id']])) ?>" class="btn btn-sm btn-outline-primary">Editar</a>
+    <?php endif; ?>
+    <?php if (!empty($canDeletePatients)): ?>
     <form method="POST" action="excluir_paciente.php" class="d-inline" onsubmit="return confirm('Excluir este paciente?')">
         <input type="hidden" name="id" value="<?= (int) $patient['id'] ?>">
         <button type="submit" class="btn btn-sm btn-outline-danger">Excluir</button>
     </form>
+    <?php endif; ?>
 </td>
 </tr>
 <?php endforeach; ?>
@@ -683,9 +701,11 @@ body {
 <tr>
 <td colspan="7" class="text-center py-4 text-muted">
 Nenhum paciente encontrado para os filtros informados.
+<?php if (!empty($canCreatePatients)): ?>
 <div class="mt-2">
 <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#patientFormModal">Cadastrar primeiro paciente</button>
 </div>
+<?php endif; ?>
 </td>
 </tr>
 <?php endif; ?>
@@ -710,7 +730,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os paci
 </section>
 
 <?php if ($shouldLoadPatients): ?>
-<div class="row mt-3">
+<div class="row mt-3 app-print-hide">
 <div class="col-md-6 mb-3">
 <div class="patient-alert-card is-danger">
 <div class="patient-alert-title">
@@ -893,7 +913,9 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os paci
                     <?php if ($isEditingPatient): ?>
                         <div class="col-12 d-flex flex-wrap gap-2">
                             <a href="paciente_historico.php?paciente_id=<?= (int) $patientFormValues['patient_id'] ?>" class="btn btn-sm btn-outline-success">Historico de atendimentos</a>
+                            <?php if (!empty($canAccessPatientSheets)): ?>
                             <a href="paciente_fichas.php?paciente_id=<?= (int) $patientFormValues['patient_id'] ?>" class="btn btn-sm btn-outline-primary">Fichas de fisioterapia</a>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                             </div>

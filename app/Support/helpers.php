@@ -602,3 +602,385 @@ function app_normalize_phone(?string $phone): string
 
     return $digits;
 }
+
+function app_report_issued_at(): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone('America/Araguaina')))->format('d/m/Y H:i');
+}
+
+function app_report_clinic(mysqli $conn): array
+{
+    $logoColumn = app_column_exists($conn, 'clinicas', 'logotipo') ? 'logotipo' : 'NULL AS logotipo';
+
+    return app_stmt_one(
+        $conn,
+        'SELECT nome_fantasia, razao_social, cnpj, telefone, whatsapp, email, endereco, cidade, estado, ' . $logoColumn . '
+         FROM clinicas
+         WHERE id = ?
+         LIMIT 1',
+        'i',
+        [app_active_clinic_id()]
+    ) ?? [];
+}
+
+function app_report_logo_src(?string $path): string
+{
+    $logo = trim((string) $path);
+
+    if ($logo === '') {
+        return '';
+    }
+
+    if (preg_match('/^(?:https?:)?\/\//i', $logo)) {
+        return $logo;
+    }
+
+    $logo = ltrim(str_replace('\\', '/', $logo), '/');
+    $fullPath = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $logo);
+
+    return is_file($fullPath) ? $logo : '';
+}
+
+function app_report_initials(string $name): string
+{
+    $initials = '';
+
+    foreach (preg_split('/\s+/', trim($name)) ?: [] as $part) {
+        if ($part === '') {
+            continue;
+        }
+
+        $initials .= strtoupper(substr($part, 0, 1));
+
+        if (strlen($initials) >= 2) {
+            break;
+        }
+    }
+
+    return substr($initials !== '' ? $initials : 'CL', 0, 3);
+}
+
+function app_report_print_header(mysqli $conn, string $title, array $lines = [], array $metrics = [], ?string $issuedAt = null): string
+{
+    $clinic = app_report_clinic($conn);
+    $clinicName = trim((string) ($clinic['nome_fantasia'] ?? app_current_clinic_name()));
+    $legalName = trim((string) ($clinic['razao_social'] ?? ''));
+    $logoSrc = app_report_logo_src($clinic['logotipo'] ?? '');
+    $contacts = [];
+    $address = [];
+
+    if (!empty($clinic['cnpj'])) {
+        $contacts[] = 'CNPJ ' . app_format_cnpj((string) $clinic['cnpj']);
+    }
+
+    if (!empty($clinic['telefone'])) {
+        $contacts[] = 'Tel. ' . app_format_phone_br((string) $clinic['telefone']);
+    }
+
+    if (!empty($clinic['whatsapp']) && (string) $clinic['whatsapp'] !== (string) ($clinic['telefone'] ?? '')) {
+        $contacts[] = 'WhatsApp ' . app_format_phone_br((string) $clinic['whatsapp']);
+    }
+
+    if (!empty($clinic['email'])) {
+        $contacts[] = (string) $clinic['email'];
+    }
+
+    if (!empty($clinic['endereco'])) {
+        $address[] = (string) $clinic['endereco'];
+    }
+
+    $cityState = trim(implode('-', array_filter([
+        trim((string) ($clinic['cidade'] ?? '')),
+        trim((string) ($clinic['estado'] ?? '')),
+    ])));
+
+    if ($cityState !== '') {
+        $address[] = $cityState;
+    }
+
+    $reportLines = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $lines)));
+    $reportMetrics = array_values(array_filter(array_map(static fn ($line): string => trim((string) $line), $metrics)));
+    $reportMetrics[] = 'Emissao: ' . ($issuedAt ?: app_report_issued_at());
+
+    ob_start();
+    ?>
+    <div class="app-report-print-header">
+        <div class="app-report-print-brand">
+            <div class="app-report-print-logo">
+                <?php if ($logoSrc !== ''): ?>
+                    <img src="<?= app_h($logoSrc) ?>" alt="Logotipo">
+                <?php else: ?>
+                    <span><?= app_h(app_report_initials($clinicName)) ?></span>
+                <?php endif; ?>
+            </div>
+            <div class="app-report-print-company">
+                <strong><?= app_h($clinicName) ?></strong>
+                <?php if ($legalName !== ''): ?>
+                    <span><?= app_h($legalName) ?></span>
+                <?php endif; ?>
+                <?php if ($contacts !== []): ?>
+                    <span><?= app_h(implode(' | ', $contacts)) ?></span>
+                <?php endif; ?>
+                <?php if ($address !== []): ?>
+                    <span><?= app_h(implode(', ', $address)) ?></span>
+                <?php endif; ?>
+            </div>
+        </div>
+        <div class="app-report-print-title">
+            <h2><?= app_h($title) ?></h2>
+            <?php foreach ($reportLines as $line): ?>
+                <p><?= app_h($line) ?></p>
+            <?php endforeach; ?>
+            <?php foreach ($reportMetrics as $line): ?>
+                <p><?= app_h($line) ?></p>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php
+
+    return (string) ob_get_clean();
+}
+
+function app_report_print_header_css(): string
+{
+    return <<<'CSS'
+.app-report-print-header {
+    display: none;
+    grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.9fr);
+    gap: 1rem;
+    padding: 0.95rem 1rem 1rem;
+    border-bottom: 1px solid rgba(19, 74, 89, 0.16);
+    margin-bottom: 0.4rem;
+}
+.app-report-print-brand {
+    display: flex;
+    gap: 0.82rem;
+    align-items: center;
+    min-width: 0;
+}
+.app-report-print-logo {
+    width: 118px;
+    height: 64px;
+    flex: 0 0 auto;
+    border: 1px solid rgba(19, 74, 89, 0.16);
+    border-radius: 8px;
+    background: #f5fafb;
+    color: #1f7a8c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+.app-report-print-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.app-report-print-company,
+.app-report-print-title {
+    min-width: 0;
+}
+.app-report-print-company strong {
+    display: block;
+    color: #173642;
+    font-size: 0.9rem;
+    line-height: 1.18;
+    text-transform: uppercase;
+}
+.app-report-print-company span,
+.app-report-print-title p {
+    display: block;
+    color: #526b76;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.app-report-print-title {
+    align-self: center;
+}
+.app-report-print-title h2 {
+    color: #102f3a;
+    font-size: 1.2rem;
+    font-weight: 800;
+    line-height: 1.12;
+    margin: 0 0 0.45rem;
+}
+.app-report-print-title p {
+    margin: 0;
+}
+.app-print-only {
+    display: none !important;
+}
+@media print {
+    @page {
+        size: A4 landscape;
+        margin: 8mm;
+    }
+    html,
+    body.app-print-page {
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+    body.app-print-page {
+        display: block !important;
+        color: #111 !important;
+        font-family: Arial, Helvetica, sans-serif;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+    body.app-print-page nav,
+    body.app-print-page .topbar-clinica,
+    body.app-print-page .app-print-hide,
+    body.app-print-page .no-print,
+    body.app-print-page .modal,
+    body.app-print-page .dropdown-menu,
+    body.app-print-page script {
+        display: none !important;
+    }
+    body.app-print-page .app-print-page-shell,
+    body.app-print-page .page-shell,
+    body.app-print-page .container,
+    body.app-print-page .container-fluid {
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+    }
+    body.app-print-page .app-print-report-area {
+        display: block !important;
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        overflow: visible !important;
+    }
+    body.app-print-page .app-print-report-area .card,
+    body.app-print-page .app-print-report-area .soft-card,
+    body.app-print-page .app-print-report-area .card-body {
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+    body.app-print-page .app-print-report-area .table-responsive {
+        overflow: visible !important;
+    }
+    body.app-print-page .app-report-print-header {
+        display: grid !important;
+        grid-template-columns: 45% 1fr;
+        align-items: stretch;
+        gap: 7mm;
+        padding: 0 0 6mm;
+        margin: 0 0 5mm;
+        border-bottom: 2px solid #12333e;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    body.app-print-page .app-report-print-logo {
+        width: 38mm;
+        height: 22mm;
+        border: 1px solid #8aa9b2;
+        border-radius: 3mm;
+        background: #fff;
+        color: #12333e;
+        font-size: 13pt;
+    }
+    body.app-print-page .app-report-print-company strong {
+        color: #12333e;
+        font-size: 11pt;
+        margin-bottom: 1.2mm;
+    }
+    body.app-print-page .app-report-print-company span,
+    body.app-print-page .app-report-print-title p {
+        color: #213f49;
+        font-size: 8.4pt;
+        line-height: 1.32;
+    }
+    body.app-print-page .app-report-print-title {
+        border-left: 1px solid #c9d9de;
+        padding-left: 7mm;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    body.app-print-page .app-report-print-title h2 {
+        color: #12333e;
+        font-size: 16pt;
+        text-transform: uppercase;
+        margin-bottom: 2.4mm;
+    }
+    body.app-print-page .app-print-report-area table {
+        width: 100% !important;
+        min-width: 0 !important;
+        border-collapse: collapse !important;
+        border-spacing: 0 !important;
+        table-layout: fixed;
+        font-size: 8.4pt;
+        line-height: 1.25;
+    }
+    body.app-print-page .app-print-report-area table thead {
+        display: table-header-group;
+    }
+    body.app-print-page .app-print-report-area table thead th {
+        position: static !important;
+        background: #12333e !important;
+        color: #fff !important;
+        border: 1px solid #12333e !important;
+        font-size: 8pt;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0;
+    }
+    body.app-print-page .app-print-report-area table th,
+    body.app-print-page .app-print-report-area table td {
+        padding: 5px 7px !important;
+        border: 1px solid #d6e0e4 !important;
+        overflow-wrap: anywhere;
+        vertical-align: top;
+    }
+    body.app-print-page .app-print-report-area table tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    body.app-print-page .app-print-report-area tfoot td {
+        font-weight: 800;
+        color: #12333e;
+        background: #f5fafb !important;
+    }
+    body.app-print-page .app-print-actions,
+    body.app-print-page .acoes,
+    body.app-print-page .app-print-report-area .btn,
+    body.app-print-page .app-print-report-area form,
+    body.app-print-page .app-print-report-area input[type="checkbox"] {
+        display: none !important;
+    }
+    body.app-print-page .app-print-only {
+        display: inline !important;
+    }
+    body.app-print-page .app-print-report-area::after {
+        content: "Relatorio gerado pelo sistema Clinica Fisiolife";
+        display: block;
+        margin-top: 5mm;
+        padding-top: 2mm;
+        border-top: 1px solid #d6e0e4;
+        color: #526b76;
+        font-size: 7.6pt;
+        text-align: right;
+    }
+}
+CSS;
+}

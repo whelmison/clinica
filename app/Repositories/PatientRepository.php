@@ -20,6 +20,11 @@ final class PatientRepository
         $where = ['p.clinica_id = :clinic_id'];
         $having = [];
         $params = [':clinic_id' => $this->clinicId()];
+        $professionalScope = trim(app_professional_scope_exists_for_patient('p.id'));
+
+        if ($professionalScope !== '') {
+            $where[] = preg_replace('/^AND\s+/i', '', $professionalScope);
+        }
 
         $patient = trim((string) ($filters['paciente'] ?? ''));
         $patientId = (int) ($filters['paciente_id'] ?? 0);
@@ -134,27 +139,32 @@ final class PatientRepository
 
     public function find(int $patientId): ?array
     {
+        $professionalScope = trim(app_professional_scope_exists_for_patient('p.id'));
+        $professionalScopeSql = $professionalScope !== ''
+            ? ' AND ' . preg_replace('/^AND\s+/i', '', $professionalScope)
+            : '';
         $stmt = $this->pdo->prepare(
-            'SELECT id,
-                    nome,
-                    telefone,
-                    cpf,
-                    data_nascimento,
-                    cep,
-                    endereco,
-                    numero,
-                    complemento,
-                    bairro,
-                    cidade,
-                    estado,
-                    telefone_emergencia,
-                    observacoes,
-                    indicado_por,
-                    prontuario,
-                    dia_preferencia,
-                    horario_preferencia
-             FROM pacientes
-             WHERE clinica_id = :clinic_id AND id = :id
+            'SELECT p.id,
+                    p.nome,
+                    p.telefone,
+                    p.cpf,
+                    p.data_nascimento,
+                    p.cep,
+                    p.endereco,
+                    p.numero,
+                    p.complemento,
+                    p.bairro,
+                    p.cidade,
+                    p.estado,
+                    p.telefone_emergencia,
+                    p.observacoes,
+                    p.indicado_por,
+                    p.prontuario,
+                    p.dia_preferencia,
+                    p.horario_preferencia
+             FROM pacientes p
+             WHERE p.clinica_id = :clinic_id AND p.id = :id
+             ' . $professionalScopeSql . '
              LIMIT 1'
         );
         $stmt->execute([':clinic_id' => $this->clinicId(), ':id' => $patientId]);
@@ -305,6 +315,25 @@ final class PatientRepository
             ':prontuario' => $data['prontuario'],
             ':dia_preferencia' => $data['dia_preferencia'],
             ':horario_preferencia' => $data['horario_preferencia'],
+        ]);
+    }
+
+    public function linkProfessional(int $patientId, int $professionalId, string $origin = 'manual'): void
+    {
+        if ($patientId <= 0 || $professionalId <= 0) {
+            return;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO paciente_profissionais (clinica_id, paciente_id, profissional_id, origem)
+             VALUES (:clinic_id, :paciente_id, :profissional_id, :origem)
+             ON DUPLICATE KEY UPDATE origem = VALUES(origem)'
+        );
+        $stmt->execute([
+            ':clinic_id' => $this->clinicId(),
+            ':paciente_id' => $patientId,
+            ':profissional_id' => $professionalId,
+            ':origem' => $origin,
         ]);
     }
 }

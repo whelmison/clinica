@@ -1,13 +1,8 @@
 <?php include 'config/db.php'; ?>
 <?php
-$canManageAttendances = app_has_any_role(['profissional', 'secretaria', 'administrativo', 'desenvolvedor']);
 $clinicId = app_active_clinic_id();
 $isAttendancePost = app_request_method() === 'POST';
-$attendanceMessage = '';
-$autoOpenAttendanceModal = app_query_int('open_new') === 1;
-$editAttendanceId = app_query_int('edit_id');
-$editAttendance = null;
-$autoOpenEditAttendanceModal = false;
+$canMarkAttendanceGlosa = !app_is_professional_user() && app_has_any_role(['secretaria', 'administrativo', 'desenvolvedor']);
 $attendanceFilters = [
     'paciente' => trim((string) ($isAttendancePost ? app_request_post('filter_paciente', '') : app_request_query('paciente', ''))),
     'paciente_id' => $isAttendancePost ? app_post_int('filter_paciente_id') : app_query_int('paciente_id'),
@@ -19,14 +14,7 @@ $attendanceFilters = [
     'ano' => trim((string) ($isAttendancePost ? app_request_post('filter_ano', '') : app_request_query('ano', ''))),
 ];
 $shouldLoadAttendances = app_request_query('filtrar', '') === '1'
-    || ($isAttendancePost && app_request_post('filter_filtrar', '') === '1')
-    || $editAttendanceId > 0;
-$attendanceFormValues = [
-    'paciente_id' => 0,
-    'paciente_nome' => '',
-    'guia_id' => 0,
-    'data' => date('Y-m-d'),
-];
+    || ($isAttendancePost && app_request_post('filter_filtrar', '') === '1');
 
 if (!function_exists('app_attendance_filter_query')) {
     function app_attendance_filter_query(array $filters, array $extra = []): string
@@ -63,151 +51,9 @@ function app_attendance_professional_where(array &$where, string &$types, array 
     $params[] = $professionalId;
 }
 
-function app_attendance_find(mysqli $conn, int $attendanceId): ?array
-{
-    $where = ['a.clinica_id = ?', 'a.id = ?'];
-    $types = 'ii';
-    $params = [app_active_clinic_id(), $attendanceId];
-    app_attendance_professional_where($where, $types, $params);
-
-    return app_stmt_one(
-        $conn,
-        'SELECT a.*, p.nome AS paciente_nome, g.codigo AS guia_codigo, pl.nome AS plano_nome
-         FROM atendimentos a
-         LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.clinica_id = a.clinica_id
-         LEFT JOIN guias g ON g.id = a.guia_id AND g.clinica_id = a.clinica_id
-         LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
-         WHERE ' . implode(' AND ', $where) . '
-         LIMIT 1',
-        $types,
-        $params
-    );
-}
-
-function app_attendance_available_guide(mysqli $conn, int $guideId): ?array
-{
-    $where = ['g.clinica_id = ?', 'g.id = ?', "COALESCE(g.status_operacional, 'aguardando_autorizacao') NOT IN ('cancelada', 'finalizada')"];
-    $types = 'ii';
-    $params = [app_active_clinic_id(), $guideId];
-    app_attendance_professional_where($where, $types, $params);
-
-    return app_stmt_one(
-        $conn,
-        'SELECT g.*, p.nome AS paciente_nome, pl.nome AS plano_nome,
-                COALESCE(a.usadas, 0) AS usadas
-         FROM guias g
-         LEFT JOIN pacientes p ON p.id = g.paciente_id AND p.clinica_id = g.clinica_id
-         LEFT JOIN planos pl ON pl.id = g.plano_id AND pl.clinica_id = g.clinica_id
-         LEFT JOIN (
-            SELECT guia_id, COUNT(*) AS usadas
-            FROM atendimentos
-            WHERE clinica_id = ?
-            GROUP BY guia_id
-         ) a ON a.guia_id = g.id
-         WHERE ' . implode(' AND ', $where) . '
-         LIMIT 1',
-        'i' . $types,
-        array_merge([app_active_clinic_id()], $params)
-    );
-}
-
-if ($isAttendancePost && ($_POST['action'] ?? '') === 'save_attendance') {
-    if (!$canManageAttendances) {
-        app_flash('danger', 'Sem permissao para cadastrar atendimento.');
-        app_redirect('atendimentos.php');
-    }
-
-    $attendanceFormValues = [
-        'paciente_id' => app_post_int('paciente_id'),
-        'paciente_nome' => trim((string) app_request_post('paciente_nome', '')),
-        'guia_id' => app_post_int('guia_id'),
-        'data' => trim((string) app_request_post('data', date('Y-m-d'))),
-    ];
-
-    $guide = $attendanceFormValues['guia_id'] > 0 ? app_attendance_available_guide($conn, $attendanceFormValues['guia_id']) : null;
-
-    if ($attendanceFormValues['paciente_id'] <= 0) {
-        $attendanceMessage = 'Selecione o paciente pelo autocomplete.';
-    } elseif (!$guide || (int) $guide['paciente_id'] !== (int) $attendanceFormValues['paciente_id']) {
-        $attendanceMessage = 'Selecione uma guia valida para o paciente.';
-    } elseif ((int) ($guide['usadas'] ?? 0) >= (int) ($guide['total_sessoes'] ?? 0)) {
-        $attendanceMessage = 'Esta guia ja esta finalizada.';
-    } elseif ($attendanceFormValues['data'] === '' || !strtotime($attendanceFormValues['data'])) {
-        $attendanceMessage = 'Informe uma data valida.';
-    } else {
-        $data = date('Y-m-d', strtotime($attendanceFormValues['data']));
-        $ok = app_stmt_execute(
-            $conn,
-            'INSERT INTO atendimentos (clinica_id, paciente_id, data, tipo, pago, guia_id, status_atendimento)
-             VALUES (?, ?, ?, ?, ?, ?, ?)',
-            'iisssis',
-            [
-                $clinicId,
-                (int) $guide['paciente_id'],
-                $data,
-                (string) ($guide['plano_nome'] ?? ''),
-                'Pendente',
-                (int) $guide['id'],
-                'Realizado',
-            ]
-        );
-
-        if ($ok) {
-            app_flash('success', 'Atendimento cadastrado com sucesso.');
-            app_redirect('atendimentos.php?' . app_attendance_filter_query($attendanceFilters));
-        }
-
-        $attendanceMessage = 'Nao foi possivel salvar o atendimento.';
-    }
-
-    if ($guide) {
-        $attendanceFormValues['paciente_nome'] = (string) ($guide['paciente_nome'] ?? $attendanceFormValues['paciente_nome']);
-    }
-
-    $autoOpenAttendanceModal = true;
-}
-
-if ($isAttendancePost && ($_POST['action'] ?? '') === 'update_attendance') {
-    if (!$canManageAttendances) {
-        app_flash('danger', 'Sem permissao para editar atendimento.');
-        app_redirect('atendimentos.php');
-    }
-
-    $attendanceId = app_post_int('attendance_id');
-    $data = trim((string) app_request_post('data', date('Y-m-d')));
-    $status = trim((string) app_request_post('status_atendimento', 'Realizado'));
-    $allowedStatuses = ['Realizado', 'Glosado'];
-    $editAttendance = app_attendance_find($conn, $attendanceId);
-
-    if (!$editAttendance) {
-        $attendanceMessage = 'Atendimento nao encontrado ou sem permissao.';
-    } elseif ($data === '' || !strtotime($data)) {
-        $attendanceMessage = 'Informe uma data valida.';
-    } elseif (!in_array($status, $allowedStatuses, true)) {
-        $attendanceMessage = 'Status invalido.';
-    } else {
-        $ok = app_stmt_execute(
-            $conn,
-            'UPDATE atendimentos SET data = ?, status_atendimento = ? WHERE clinica_id = ? AND id = ?',
-            'ssii',
-            [date('Y-m-d', strtotime($data)), $status, $clinicId, $attendanceId]
-        );
-
-        if ($ok) {
-            app_flash('success', 'Atendimento atualizado com sucesso.');
-            app_redirect('atendimentos.php?' . app_attendance_filter_query($attendanceFilters));
-        }
-
-        $attendanceMessage = 'Nao foi possivel atualizar o atendimento.';
-    }
-
-    $editAttendanceId = $attendanceId;
-    $autoOpenEditAttendanceModal = true;
-}
-
-if ($editAttendanceId > 0 && !$editAttendance) {
-    $editAttendance = app_attendance_find($conn, $editAttendanceId);
-    $autoOpenEditAttendanceModal = $editAttendance !== null;
+if ($isAttendancePost && in_array((string) ($_POST['action'] ?? ''), ['save_attendance', 'update_attendance'], true)) {
+    app_flash('warning', 'Atendimentos sao gerados pela agenda. Use esta tela apenas para consulta e marcacao de glosa.');
+    app_redirect('atendimentos.php?' . app_attendance_filter_query($attendanceFilters));
 }
 
 $attendanceRows = [];
@@ -294,6 +140,14 @@ $monthOptions = [
     '11' => 'Novembro',
     '12' => 'Dezembro',
 ];
+$attendanceReportLines = array_values(array_filter([
+    trim((string) ($attendanceFilters['paciente'] ?? '')) !== '' ? 'Paciente: ' . trim((string) $attendanceFilters['paciente']) : 'Todos os pacientes',
+    trim((string) ($attendanceFilters['guia'] ?? '')) !== '' ? 'Guia: ' . trim((string) $attendanceFilters['guia']) : '',
+    trim((string) ($attendanceFilters['plano'] ?? '')) !== '' ? 'Plano: ' . trim((string) $attendanceFilters['plano']) : '',
+    trim((string) ($attendanceFilters['status'] ?? '')) !== '' ? 'Status: ' . trim((string) $attendanceFilters['status']) : '',
+    trim((string) ($attendanceFilters['mes'] ?? '')) !== '' ? 'Mes: ' . ($monthOptions[$attendanceFilters['mes']] ?? $attendanceFilters['mes']) : '',
+    trim((string) ($attendanceFilters['ano'] ?? '')) !== '' ? 'Ano: ' . trim((string) $attendanceFilters['ano']) : '',
+]));
 ?>
 <!DOCTYPE html>
 <html>
@@ -532,41 +386,36 @@ body {
     }
 }
 
+<?= app_report_print_header_css() ?>
 @media print {
-    button, select, a, .attendance-filter-card, .topbar-clinica { display: none !important; }
-    body { background: #fff !important; }
+    .attendance-shell {
+        padding: 0 !important;
+    }
 }
 </style>
 </head>
 
-<body>
+<body class="app-print-page">
 
 <?php include 'partials/menu.php'; ?>
 
 <div class="container-fluid attendance-shell">
 
-<section class="attendance-topbar">
+<section class="attendance-topbar app-print-hide">
 <div>
 <p class="attendance-kicker">Atendimentos</p>
 <h3>Atendimentos</h3>
-<p>Registre sessoes realizadas e acompanhe glosas por guia.</p>
+<p><?= $canMarkAttendanceGlosa ? 'Consulte sessoes geradas pela agenda e marque glosas quando houver.' : 'Consulte as sessoes geradas pela agenda.' ?></p>
 </div>
 <div class="attendance-top-actions">
 <button type="submit" form="attendanceFilterForm" name="filtrar" value="1" class="btn btn-light text-secondary">Filtrar</button>
 <a href="atendimentos.php" class="btn btn-outline-light">Limpar filtro</a>
-<?php if ($canManageAttendances): ?>
-<button type="button" class="btn btn-light" data-bs-toggle="modal" data-bs-target="#attendanceModal">+ Novo atendimento</button>
-<?php endif; ?>
-<div class="dropdown">
-<button class="btn btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Acoes</button>
-<ul class="dropdown-menu dropdown-menu-end">
-<li><button class="dropdown-item" type="button" onclick="window.print()">Exportar PDF</button></li>
-</ul>
-</div>
+<button type="button" class="btn btn-outline-light" data-export-list onclick="appExportList('attendancesReportArea', 'jpg', 'atendimentos')">Exportar JPG</button>
+<button type="button" class="btn btn-outline-light" onclick="window.print()">Imprimir relatorio</button>
 </div>
 </section>
 
-<div class="attendance-filter-card p-2">
+<div class="attendance-filter-card p-2 app-print-hide">
 <form method="GET" id="attendanceFilterForm" class="row g-2 align-items-end">
 <div class="col-md-3">
 <label class="form-label small text-muted">Paciente</label>
@@ -621,7 +470,10 @@ body {
 </form>
 </div>
 
-<section class="attendance-list-panel">
+<section class="attendance-list-panel app-print-report-area" id="attendancesReportArea">
+<?= app_report_print_header($conn, 'Atendimentos', $attendanceReportLines, [
+    'Atendimentos listados: ' . ($shouldLoadAttendances ? count($attendanceRows) : 0),
+]) ?>
 <table class="table table-bordered attendance-table">
 <thead>
 <tr>
@@ -630,7 +482,6 @@ body {
 <th>Guia</th>
 <th>Data</th>
 <th class="text-center">Glosa</th>
-<th class="text-end">Acoes</th>
 </tr>
 </thead>
 <tbody id="tbody">
@@ -638,7 +489,6 @@ body {
 <?php foreach ($attendanceRows as $row): ?>
 <?php
     $status = (string) ($row['status_atendimento'] ?? 'Realizado');
-    $editUrl = 'atendimentos.php?' . app_attendance_filter_query($attendanceFilters, ['edit_id' => (int) $row['id']]);
 ?>
 <tr>
 <td><span class="attendance-name"><?= app_h((string) ($row['paciente_nome'] ?? '')) ?></span></td>
@@ -646,29 +496,23 @@ body {
 <td><?= app_h((string) ($row['guia_codigo'] ?? '')) ?></td>
 <td><?= app_h(app_date_br((string) $row['data'])) ?></td>
 <td class="text-center">
+<?php if ($canMarkAttendanceGlosa): ?>
 <input type="checkbox" <?= $status === 'Glosado' ? 'checked' : '' ?> onclick="toggleGlosa(<?= (int) $row['id'] ?>, this)" title="Marque para indicar glosa neste atendimento.">
-</td>
-<td class="acoes">
-<?php if ($canManageAttendances): ?>
-<a href="<?= app_h($editUrl) ?>" class="btn btn-sm btn-outline-primary">Editar</a>
-<form method="POST" action="excluir_atendimento.php" class="d-inline" onsubmit="return confirm('Excluir este atendimento?')">
-<input type="hidden" name="id" value="<?= (int) $row['id'] ?>">
-<button type="submit" class="btn btn-sm btn-outline-danger">Excluir</button>
-</form>
 <?php else: ?>
-<span class="text-muted small">Somente leitura</span>
+<input type="checkbox" <?= $status === 'Glosado' ? 'checked' : '' ?> disabled title="Glosa e uma marcacao administrativa.">
 <?php endif; ?>
+<span class="app-print-only"><?= $status === 'Glosado' ? 'Sim' : 'Nao' ?></span>
 </td>
 </tr>
 <?php endforeach; ?>
 <?php if ($attendanceRows === []): ?>
 <tr>
-<td colspan="6" class="text-center py-4 text-muted">Nenhum atendimento encontrado para os filtros informados.</td>
+<td colspan="5" class="text-center py-4 text-muted">Nenhum atendimento encontrado para os filtros informados.</td>
 </tr>
 <?php endif; ?>
 <?php else: ?>
 <tr>
-<td colspan="6" class="text-center py-4 text-muted">
+<td colspan="5" class="text-center py-4 text-muted">
 Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os atendimentos.
 </td>
 </tr>
@@ -676,7 +520,7 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os aten
 </tbody>
 <tfoot>
 <tr>
-<td colspan="6" id="total">Total: <?= $shouldLoadAttendances ? count($attendanceRows) : 0 ?> atendimento(s)</td>
+<td colspan="5" id="total">Total: <?= $shouldLoadAttendances ? count($attendanceRows) : 0 ?> atendimento(s)</td>
 </tr>
 </tfoot>
 </table>
@@ -684,141 +528,8 @@ Use os filtros acima e clique em <strong>Filtrar</strong> para consultar os aten
 
 </div>
 
-<?php if ($canManageAttendances): ?>
-<div class="modal fade attendance-modal" id="attendanceModal" tabindex="-1" aria-hidden="true">
-<div class="modal-dialog modal-lg modal-dialog-centered">
-<div class="modal-content">
-<div class="modal-header">
-<div>
-<h5 class="modal-title">Novo atendimento</h5>
-</div>
-<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
-</div>
-<div class="modal-body">
-<?php if ($attendanceMessage && !$editAttendance): ?>
-<div class="alert alert-warning"><?= app_h($attendanceMessage) ?></div>
-<?php endif; ?>
-<form method="POST" id="attendanceForm" class="attendance-form">
-<input type="hidden" name="action" value="save_attendance">
-<input type="hidden" name="filter_paciente" value="<?= app_h($attendanceFilters['paciente']) ?>">
-<input type="hidden" name="filter_paciente_id" value="<?= (int) ($attendanceFilters['paciente_id'] ?? 0) ?>">
-<input type="hidden" name="filter_guia" value="<?= app_h($attendanceFilters['guia']) ?>">
-<input type="hidden" name="filter_guia_id" value="<?= (int) ($attendanceFilters['guia_id'] ?? 0) ?>">
-<input type="hidden" name="filter_plano" value="<?= app_h($attendanceFilters['plano']) ?>">
-<input type="hidden" name="filter_status" value="<?= app_h($attendanceFilters['status']) ?>">
-<input type="hidden" name="filter_mes" value="<?= app_h($attendanceFilters['mes']) ?>">
-<input type="hidden" name="filter_ano" value="<?= app_h($attendanceFilters['ano']) ?>">
-<input type="hidden" name="filter_filtrar" value="<?= $shouldLoadAttendances ? '1' : '' ?>">
-<div class="row g-3">
-<div class="col-md-6">
-<label class="form-label">Paciente</label>
-<input type="hidden" name="paciente_id" id="attendancePacienteId" value="<?= (int) $attendanceFormValues['paciente_id'] ?>">
-<input type="hidden" name="paciente_nome" id="attendancePacienteNome" value="<?= app_h($attendanceFormValues['paciente_nome']) ?>">
-<div class="autocomplete-wrap">
-<input type="text" id="attendancePacienteBusca" class="form-control" autocomplete="off" required
-       value="<?= app_h($attendanceFormValues['paciente_nome']) ?>"
-       title="Digite parte do nome e escolha o paciente da lista."
-       placeholder="Digite para buscar o paciente">
-<div class="autocomplete-menu" id="attendancePacienteMenu"></div>
-</div>
-</div>
-<div class="col-md-6">
-<label class="form-label">Guia</label>
-<select name="guia_id" id="attendanceGuia" class="form-select" required title="Escolha uma guia em aberto para registrar a sessao.">
-<option value="">Selecione o paciente primeiro</option>
-</select>
-</div>
-<div class="col-md-4">
-<label class="form-label">Data</label>
-<input type="date" name="data" class="form-control" value="<?= app_h($attendanceFormValues['data']) ?>" required title="Data em que a sessao foi realizada.">
-</div>
-</div>
-</form>
-</div>
-<div class="modal-footer">
-<div class="me-auto attendance-shortcuts">Atalhos: <strong>Alt+S</strong> salvar | <strong>Esc</strong> cancelar</div>
-<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar <span class="small text-muted">(Esc)</span></button>
-<button type="submit" form="attendanceForm" class="btn btn-primary px-4">Salvar atendimento <span class="small">(Alt+S)</span></button>
-</div>
-</div>
-</div>
-</div>
-<?php endif; ?>
-
-<?php if ($canManageAttendances && $editAttendance): ?>
-<div class="modal fade attendance-modal" id="editAttendanceModal" tabindex="-1" aria-hidden="true">
-<div class="modal-dialog modal-lg modal-dialog-centered">
-<div class="modal-content">
-<div class="modal-header">
-<div>
-<h5 class="modal-title">Editar atendimento</h5>
-</div>
-<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
-</div>
-<div class="modal-body">
-<?php if ($attendanceMessage): ?>
-<div class="alert alert-warning"><?= app_h($attendanceMessage) ?></div>
-<?php endif; ?>
-<form method="POST" id="editAttendanceForm" class="attendance-form">
-<input type="hidden" name="action" value="update_attendance">
-<input type="hidden" name="attendance_id" value="<?= (int) $editAttendance['id'] ?>">
-<input type="hidden" name="filter_paciente" value="<?= app_h($attendanceFilters['paciente']) ?>">
-<input type="hidden" name="filter_paciente_id" value="<?= (int) ($attendanceFilters['paciente_id'] ?? 0) ?>">
-<input type="hidden" name="filter_guia" value="<?= app_h($attendanceFilters['guia']) ?>">
-<input type="hidden" name="filter_guia_id" value="<?= (int) ($attendanceFilters['guia_id'] ?? 0) ?>">
-<input type="hidden" name="filter_plano" value="<?= app_h($attendanceFilters['plano']) ?>">
-<input type="hidden" name="filter_status" value="<?= app_h($attendanceFilters['status']) ?>">
-<input type="hidden" name="filter_mes" value="<?= app_h($attendanceFilters['mes']) ?>">
-<input type="hidden" name="filter_ano" value="<?= app_h($attendanceFilters['ano']) ?>">
-<input type="hidden" name="filter_filtrar" value="<?= $shouldLoadAttendances ? '1' : '' ?>">
-<div class="row g-3">
-<div class="col-md-6">
-<label class="form-label">Paciente</label>
-<input class="form-control" value="<?= app_h((string) ($editAttendance['paciente_nome'] ?? '')) ?>" readonly title="Paciente vinculado ao atendimento.">
-</div>
-<div class="col-md-3">
-<label class="form-label">Plano</label>
-<input class="form-control" value="<?= app_h((string) ($editAttendance['plano_nome'] ?? '')) ?>" readonly title="Plano da guia usada neste atendimento.">
-</div>
-<div class="col-md-3">
-<label class="form-label">Guia</label>
-<input class="form-control" value="<?= app_h((string) ($editAttendance['guia_codigo'] ?? '')) ?>" readonly title="Guia vinculada ao atendimento.">
-</div>
-<div class="col-md-4">
-<label class="form-label">Data</label>
-<input type="date" name="data" class="form-control" value="<?= app_h((string) $editAttendance['data']) ?>" required title="Data em que a sessao foi realizada.">
-</div>
-<div class="col-md-4">
-<label class="form-label">Status</label>
-<select name="status_atendimento" class="form-select" title="Use Glosado quando a sessao nao deve ser faturada normalmente.">
-<?php foreach (['Realizado', 'Glosado'] as $statusOption): ?>
-<option value="<?= app_h($statusOption) ?>" <?= (string) ($editAttendance['status_atendimento'] ?? 'Realizado') === $statusOption ? 'selected' : '' ?>><?= app_h($statusOption) ?></option>
-<?php endforeach; ?>
-</select>
-</div>
-</div>
-</form>
-</div>
-<div class="modal-footer">
-<div class="me-auto attendance-shortcuts">Atalhos: <strong>Alt+S</strong> salvar | <strong>Esc</strong> cancelar</div>
-<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar <span class="small text-muted">(Esc)</span></button>
-<button type="submit" form="editAttendanceForm" class="btn btn-primary px-4">Salvar atendimento <span class="small">(Alt+S)</span></button>
-</div>
-</div>
-</div>
-</div>
-<?php endif; ?>
-
 <script>
 const csrfToken = <?= json_encode(app_csrf_token()) ?>;
-const attendanceForm = document.getElementById('attendanceForm');
-const editAttendanceForm = document.getElementById('editAttendanceForm');
-const attendancePacienteBusca = document.getElementById('attendancePacienteBusca');
-const attendancePacienteMenu = document.getElementById('attendancePacienteMenu');
-const attendancePacienteId = document.getElementById('attendancePacienteId');
-const attendancePacienteNome = document.getElementById('attendancePacienteNome');
-const attendanceGuia = document.getElementById('attendanceGuia');
-const selectedAttendanceGuide = <?= (int) $attendanceFormValues['guia_id'] ?>;
 const attendanceFilterPacienteBusca = document.getElementById('attendanceFilterPacienteBusca');
 const attendanceFilterPacienteMenu = document.getElementById('attendanceFilterPacienteMenu');
 const attendanceFilterPacienteId = document.getElementById('attendanceFilterPacienteId');
@@ -941,10 +652,6 @@ async function loadGuideOptionsForPatient(selectElement, patientId, selectedGuid
     }
 }
 
-async function loadGuidesForPatient(patientId, selectedGuideId = 0) {
-    await loadGuideOptionsForPatient(attendanceGuia, patientId, selectedGuideId);
-}
-
 function setFilterGuideTextMode() {
     if (attendanceFilterGuiaText) {
         attendanceFilterGuiaText.hidden = false;
@@ -982,12 +689,6 @@ async function loadFilterGuidesForPatient(patientId, selectedGuideId = 0) {
     }
 }
 
-setupPatientAutocomplete(attendancePacienteBusca, attendancePacienteMenu, (patient) => {
-    attendancePacienteId.value = patient ? patient.id : '';
-    attendancePacienteNome.value = patient ? patient.nome : '';
-    loadGuidesForPatient(patient ? patient.id : 0);
-});
-
 setupPatientAutocomplete(attendanceFilterPacienteBusca, attendanceFilterPacienteMenu, (patient) => {
     if (attendanceFilterPacienteId) {
         attendanceFilterPacienteId.value = patient ? patient.id : '';
@@ -1009,72 +710,13 @@ if (attendanceFilterGuiaSelect) {
     });
 }
 
-if (attendancePacienteId && attendancePacienteId.value) {
-    loadGuidesForPatient(attendancePacienteId.value, selectedAttendanceGuide);
-}
-
 if (selectedFilterPatientId > 0) {
     loadFilterGuidesForPatient(selectedFilterPatientId, selectedFilterGuideId);
 } else {
     setFilterGuideTextMode();
 }
-
-if (attendanceForm) {
-    attendanceForm.addEventListener('submit', (event) => {
-        if (!attendancePacienteId.value) {
-            event.preventDefault();
-            alert('Escolha um paciente da lista de autocomplete.');
-            attendancePacienteBusca.focus();
-            return;
-        }
-
-        if (!attendanceGuia.value) {
-            event.preventDefault();
-            alert('Escolha uma guia em aberto.');
-            attendanceGuia.focus();
-        }
-    });
-}
-
-document.addEventListener('keydown', (event) => {
-    if (!event.altKey || event.key.toLowerCase() !== 's') return;
-
-    const attendanceModal = document.getElementById('attendanceModal');
-    const editAttendanceModal = document.getElementById('editAttendanceModal');
-
-    if (attendanceModal && attendanceModal.classList.contains('show') && attendanceForm) {
-        event.preventDefault();
-        attendanceForm.requestSubmit();
-    }
-
-    if (editAttendanceModal && editAttendanceModal.classList.contains('show') && editAttendanceForm) {
-        event.preventDefault();
-        editAttendanceForm.requestSubmit();
-    }
-});
 </script>
-
-<?php if ($autoOpenAttendanceModal): ?>
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const modalElement = document.getElementById('attendanceModal');
-    if (modalElement && window.bootstrap) {
-        bootstrap.Modal.getOrCreateInstance(modalElement).show();
-    }
-});
-</script>
-<?php endif; ?>
-
-<?php if ($autoOpenEditAttendanceModal && $editAttendance): ?>
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const modalElement = document.getElementById('editAttendanceModal');
-    if (modalElement && window.bootstrap) {
-        bootstrap.Modal.getOrCreateInstance(modalElement).show();
-    }
-});
-</script>
-<?php endif; ?>
+<script src="assets/list-export.js"></script>
 
 </body>
 </html>

@@ -26,14 +26,33 @@ final class ProfessionalRepository
     public function professionals(int $page, int $perPage, array $filters = []): array
     {
         $search = trim((string) ($filters['busca_profissional'] ?? ''));
+        $searchDigits = preg_replace('/\D+/', '', $search);
+        $professionalId = (int) ($filters['profissional_id'] ?? 0);
         $clauses = ['p.clinica_id = :clinic_id'];
         $params = [':clinic_id' => $this->clinicId()];
 
-        if ($search !== '') {
-            $clauses[] = '(p.nome LIKE :search_name OR p.profissao LIKE :search_profession OR p.telefone LIKE :search_phone)';
-            $params[':search_name'] = '%' . $search . '%';
+        if ($professionalId > 0) {
+            $clauses[] = 'p.id = :profissional_id';
+            $params[':profissional_id'] = $professionalId;
+        } elseif ($search !== '') {
+            $phoneDigitsSql = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.telefone, ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', ''), '+', '')";
+            $searchParts = [
+                'p.nome LIKE :search_name_start',
+                'p.nome LIKE :search_name_word',
+                'p.profissao LIKE :search_profession',
+                'p.telefone LIKE :search_phone',
+            ];
+            $params[':search_name_start'] = $search . '%';
+            $params[':search_name_word'] = '% ' . $search . '%';
             $params[':search_profession'] = '%' . $search . '%';
             $params[':search_phone'] = '%' . $search . '%';
+
+            if (strlen($searchDigits) >= 2) {
+                $searchParts[] = $phoneDigitsSql . ' LIKE :search_phone_digits';
+                $params[':search_phone_digits'] = '%' . $searchDigits . '%';
+            }
+
+            $clauses[] = '(' . implode(' OR ', $searchParts) . ')';
         }
 
         $where = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
@@ -77,12 +96,27 @@ final class ProfessionalRepository
 
     public function professionalServiceMap(int $professionalId): array
     {
-        $stmt = $this->pdo->prepare('SELECT servico_id, COALESCE(tempo_minutos, 0) AS tempo_minutos FROM profissional_servico WHERE clinica_id = :clinic_id AND profissional_id = :professional_id');
+        $stmt = $this->pdo->prepare(
+            'SELECT servico_id,
+                    COALESCE(tempo_minutos, 0) AS tempo_minutos,
+                    COALESCE(cobranca_tipo, \'percentual\') AS cobranca_tipo,
+                    COALESCE(cobranca_valor, 0) AS cobranca_valor,
+                    COALESCE(cobra_imposto, 0) AS cobra_imposto,
+                    COALESCE(imposto_percentual, 0) AS imposto_percentual
+             FROM profissional_servico
+             WHERE clinica_id = :clinic_id AND profissional_id = :professional_id'
+        );
         $stmt->execute([':clinic_id' => $this->clinicId(), ':professional_id' => $professionalId]);
         $map = [];
 
         foreach ($stmt->fetchAll() as $row) {
-            $map[(int) $row['servico_id']] = (int) $row['tempo_minutos'];
+            $map[(int) $row['servico_id']] = [
+                'tempo_minutos' => (int) $row['tempo_minutos'],
+                'cobranca_tipo' => (string) $row['cobranca_tipo'],
+                'cobranca_valor' => (float) $row['cobranca_valor'],
+                'cobra_imposto' => (int) $row['cobra_imposto'],
+                'imposto_percentual' => (float) $row['imposto_percentual'],
+            ];
         }
 
         return $map;
@@ -91,8 +125,8 @@ final class ProfessionalRepository
     public function createProfessional(array $data): int
     {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO profissionais (clinica_id, nome, endereco, telefone, profissao, permite_editar_guias, permite_secretaria_liberar_agenda, salario_fixo, comissao_percentual, imposto_fixo, imposto_percentual, mensagem_padrao_whatsapp)
-             VALUES (:clinic_id, :nome, :endereco, :telefone, :profissao, :permite_editar_guias, :permite_secretaria_liberar_agenda, :salario_fixo, :comissao_percentual, :imposto_fixo, :imposto_percentual, :mensagem_padrao_whatsapp)'
+            'INSERT INTO profissionais (clinica_id, nome, endereco, telefone, profissao, foto, permite_editar_guias, permite_secretaria_liberar_agenda, salario_fixo, comissao_percentual, imposto_fixo, imposto_percentual, mensagem_padrao_whatsapp)
+             VALUES (:clinic_id, :nome, :endereco, :telefone, :profissao, :foto, :permite_editar_guias, :permite_secretaria_liberar_agenda, :salario_fixo, :comissao_percentual, :imposto_fixo, :imposto_percentual, :mensagem_padrao_whatsapp)'
         );
         $stmt->execute([
             ':clinic_id' => $this->clinicId(),
@@ -100,6 +134,7 @@ final class ProfessionalRepository
             ':endereco' => $data['endereco'],
             ':telefone' => $data['telefone'],
             ':profissao' => $data['profissao'],
+            ':foto' => $data['foto'] ?? null,
             ':permite_editar_guias' => $data['permite_editar_guias'],
             ':permite_secretaria_liberar_agenda' => $data['permite_secretaria_liberar_agenda'],
             ':salario_fixo' => $data['salario_fixo'] ?? 0,
@@ -120,6 +155,7 @@ final class ProfessionalRepository
                  endereco = :endereco,
                  telefone = :telefone,
                  profissao = :profissao,
+                 foto = :foto,
                  permite_editar_guias = :permite_editar_guias,
                  permite_secretaria_liberar_agenda = :permite_secretaria_liberar_agenda,
                  salario_fixo = :salario_fixo,
@@ -136,6 +172,7 @@ final class ProfessionalRepository
             ':endereco' => $data['endereco'],
             ':telefone' => $data['telefone'],
             ':profissao' => $data['profissao'],
+            ':foto' => $data['foto'] ?? null,
             ':permite_editar_guias' => $data['permite_editar_guias'],
             ':permite_secretaria_liberar_agenda' => $data['permite_secretaria_liberar_agenda'],
             ':salario_fixo' => $data['salario_fixo'] ?? 0,
@@ -159,16 +196,22 @@ final class ProfessionalRepository
         }
 
         $stmt = $this->pdo->prepare(
-            'INSERT INTO profissional_servico (clinica_id, profissional_id, servico_id, tempo_minutos)
-             VALUES (:clinic_id, :professional_id, :service_id, :tempo_minutos)'
+            'INSERT INTO profissional_servico
+                (clinica_id, profissional_id, servico_id, tempo_minutos, cobranca_tipo, cobranca_valor, cobra_imposto, imposto_percentual)
+             VALUES
+                (:clinic_id, :professional_id, :service_id, :tempo_minutos, :cobranca_tipo, :cobranca_valor, :cobra_imposto, :imposto_percentual)'
         );
 
-        foreach ($services as $serviceId => $minutes) {
+        foreach ($services as $serviceId => $serviceData) {
             $stmt->execute([
                 ':clinic_id' => $clinicId,
                 ':professional_id' => $professionalId,
                 ':service_id' => $serviceId,
-                ':tempo_minutos' => $minutes,
+                ':tempo_minutos' => $serviceData['tempo_minutos'],
+                ':cobranca_tipo' => $serviceData['cobranca_tipo'],
+                ':cobranca_valor' => $serviceData['cobranca_valor'],
+                ':cobra_imposto' => $serviceData['cobra_imposto'],
+                ':imposto_percentual' => $serviceData['imposto_percentual'],
             ]);
         }
     }

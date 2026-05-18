@@ -21,7 +21,6 @@ $params = [app_active_clinic_id(), $termLike, $termLike, $termLike];
 $orderSql = 'p.nome';
 $orderTypes = '';
 $orderParams = [];
-$scopeJoin = '';
 $scopeWhere = '';
 
 if (strlen($digits) >= 2) {
@@ -48,16 +47,7 @@ if (strlen($digits) >= 2) {
 }
 
 if (app_is_professional_user()) {
-    $professionalId = app_current_professional_id();
-
-    if ($professionalId === null) {
-        app_json(['pacientes' => []]);
-    }
-
-    $scopeJoin = ' INNER JOIN guias g ON g.paciente_id = p.id AND g.clinica_id = p.clinica_id ';
-    $scopeWhere = ' AND g.profissional_id = ? ';
-    $types .= 'i';
-    $params[] = $professionalId;
+    $scopeWhere = app_professional_scope_exists_for_patient('p.id');
 }
 
 if ($orderTypes !== '') {
@@ -69,7 +59,6 @@ $rows = app_stmt_all(
     $conn,
     'SELECT DISTINCT p.id, p.nome, p.telefone, p.cpf, p.data_nascimento, p.dia_preferencia, p.horario_preferencia
      FROM pacientes p
-     ' . $scopeJoin . '
      WHERE p.clinica_id = ?
      AND (' . implode(' OR ', $searchClauses) . ')
      ' . $scopeWhere . '
